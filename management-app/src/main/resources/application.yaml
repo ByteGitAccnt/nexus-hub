@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: nexus-management
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/nexushub_management}
+    username: ${DATABASE_USERNAME:nexushub}
+    password: ${DATABASE_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+server:
+  port: 8090
