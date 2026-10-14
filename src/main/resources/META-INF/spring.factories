@@ -1,0 +1,2 @@
+org.springframework.boot.EnvironmentPostProcessor=com.nexusgate.nexus_gateway.Config.NexusEnvironmentPostProcessor
+org.springframework.boot.autoconfigure.AutoConfigurationImportFilter=com.nexusgate.nexus_gateway.Redis.NexusRedisAutoConfigurationFilter

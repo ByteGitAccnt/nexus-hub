@@ -1,0 +1,76 @@
+services:
+  auth:
+    url: http://localhost:8081
+    path: /api/v1/auth/**
+    publicEndpoints:
+      - /login
+      - /register
+      - /refresh
+  product:
+    url: http://localhost:8083
+    path: /api/v1/product/**
+    management:
+      endpoints:
+        - health
+  order:
+    url: http://localhost:8082
+    path: /api/v1/order/**
+    management:
+      endpoints:
+        - metrics
+
+
+management:
+  enabled: true
+  basePath: /management
+  targetPath: /actuator
+  endpoints:
+    - health
+
+
+security:
+  enabled: true
+  jwt:
+    enabled: true
+    algorithm: HS256
+    identityClaim: userid
+
+    verification:
+      type: shared-secret
+      secret: ${JWT_SECRET}
+
+    issuer: http://localhost:8081
+    audience: nexusgate
+
+rateLimit:
+  enabled: true
+  redisFailureStrategy: fail-closed
+  redisTimeoutMs: 1000
+
+  outer:
+    enabled: true
+    algorithm: token-bucket
+    capacity: 100
+    refillRate: 100
+    refillPeriodSeconds: 60
+
+  inner:
+    enabled: true
+    algorithm: token-bucket
+    capacity: 60
+    refillRate: 60
+    refillPeriodSeconds: 60
+
+
+logging:
+  enabled: true
+  fields:
+    duration: false
+
+redis:
+  host: ${REDIS_HOST}
+  port: ${REDIS_PORT}
+
+monitoring:
+  enabled: true
+
