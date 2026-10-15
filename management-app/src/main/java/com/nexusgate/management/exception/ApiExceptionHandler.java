@@ -28,6 +28,14 @@ public class ApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler(InvalidRefreshTokenException.class)
+    ProblemDetail handleInvalidRefreshToken(InvalidRefreshTokenException exception) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED,
+                "Invalid refresh token"
+        );
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ProblemDetail handleAccessDenied(AccessDeniedException exception) {
         return ProblemDetail.forStatusAndDetail(

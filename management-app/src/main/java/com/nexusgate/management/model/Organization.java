@@ -69,6 +69,10 @@ public class Organization {
         return status;
     }
 
+    public void setStatus(OrganizationStatus status) {
+        this.status = status;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }

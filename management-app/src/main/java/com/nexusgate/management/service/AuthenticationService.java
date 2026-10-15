@@ -4,6 +4,7 @@ import com.nexusgate.management.config.JwtProperties;
 import com.nexusgate.management.dto.LoginRequest;
 import com.nexusgate.management.dto.LoginResponse;
 import com.nexusgate.management.exception.InvalidCredentialsException;
+import com.nexusgate.management.exception.InvalidRefreshTokenException;
 import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.OrganizationStatus;
 import com.nexusgate.management.model.RefreshToken;
@@ -20,6 +21,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Locale;
@@ -62,7 +64,7 @@ public class AuthenticationService {
 
         AccessTokenIssuer.IssuedAccessToken accessToken = accessTokenIssuer.issue(user);
         String refreshToken = generateRefreshToken();
-        String tokenHash = sha256Hex(refreshToken);
+        String tokenHash = hashRefreshToken(refreshToken);
         Instant refreshExpiresAt = Instant.now().plus(jwtProperties.getRefreshTokenTtl());
 
         refreshTokenRepository.saveAndFlush(
@@ -82,13 +84,62 @@ public class AuthenticationService {
         );
     }
 
+    @Transactional
+    public LoginResponse refresh(String rawRefreshToken) {
+        RefreshToken currentToken = refreshTokenRepository.findByTokenHashForUpdate(
+                        hashRefreshToken(rawRefreshToken))
+                .filter(token -> token.isUsableAt(Instant.now()))
+                .orElseThrow(InvalidRefreshTokenException::new);
+
+        User user = currentToken.getUser();
+        Organization organization = currentToken.getOrganization();
+        if (user.getStatus() != UserStatus.ACTIVE
+                || organization.getStatus() != OrganizationStatus.ACTIVE
+                || !user.getOrganization().getId().equals(organization.getId())) {
+            throw new InvalidRefreshTokenException();
+        }
+
+        AccessTokenIssuer.IssuedAccessToken accessToken = accessTokenIssuer.issue(user);
+        String rawReplacementToken = generateRefreshToken();
+        RefreshToken replacementToken = refreshTokenRepository.saveAndFlush(new RefreshToken(
+                user,
+                organization,
+                hashRefreshToken(rawReplacementToken),
+                Instant.now().plus(jwtProperties.getRefreshTokenTtl())
+        ));
+        currentToken.revoke(replacementToken);
+        refreshTokenRepository.saveAndFlush(currentToken);
+
+        return new LoginResponse(
+                accessToken.value(),
+                "Bearer",
+                jwtProperties.getAccessTokenTtl().toSeconds(),
+                rawReplacementToken,
+                new LoginResponse.AuthenticatedUser(
+                        user.getId(),
+                        organization.getId(),
+                        user.getRole()
+                )
+        );
+    }
+
+    @Transactional
+    public void logout(String rawRefreshToken) {
+        refreshTokenRepository.findByTokenHashForUpdate(hashRefreshToken(rawRefreshToken))
+                .filter(token -> token.getRevokedAt() == null)
+                .ifPresent(token -> {
+                    token.revoke(null);
+                    refreshTokenRepository.saveAndFlush(token);
+                });
+    }
+
     private static String generateRefreshToken() {
         byte[] tokenBytes = new byte[32];
         SECURE_RANDOM.nextBytes(tokenBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes);
     }
 
-    private static String sha256Hex(String token) {
+    static String hashRefreshToken(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
                     .digest(token.getBytes(StandardCharsets.US_ASCII));

@@ -89,6 +89,10 @@ public class RefreshToken {
         }
     }
 
+    public boolean isUsableAt(Instant now) {
+        return revokedAt == null && expiresAt.isAfter(now);
+    }
+
     public UUID getId() {
         return id;
     }
