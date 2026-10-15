@@ -1,16 +1,19 @@
 spring:
+  config:
+    import: optional:file:../.env[.properties]
   application:
     name: nexus-management
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/nexushub_management}
-    username: ${DATABASE_USERNAME:nexushub}
-    password: ${DATABASE_PASSWORD:}
+    url: ${DATABASE_URL:jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:nexusgate}}
+    username: ${DATABASE_USERNAME:${POSTGRES_USER:nexusgate_app}}
+    password: ${DATABASE_PASSWORD:${POSTGRES_PASSWORD:}}
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
   flyway:
     enabled: true
+    locations: classpath:db/migration
 
 server:
   port: 8090

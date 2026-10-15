@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: nexusgate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexusgate}
+      POSTGRES_USER: ${POSTGRES_USER:-nexusgate_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DATABASE_PASSWORD:?Set POSTGRES_PASSWORD or DATABASE_PASSWORD in the root .env}}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - nexusgate_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  nexusgate_postgres_data:
+    external: true
+    name: nexusgate_postgres_data
