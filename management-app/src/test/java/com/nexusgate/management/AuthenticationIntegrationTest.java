@@ -4,11 +4,16 @@ import com.nexusgate.management.dto.LoginRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationResponse;
 import com.nexusgate.management.model.RefreshToken;
+import com.nexusgate.management.model.Organization;
+import com.nexusgate.management.model.User;
+import com.nexusgate.management.model.UserRole;
 import com.nexusgate.management.repository.OrganizationRepository;
 import com.nexusgate.management.repository.RefreshTokenRepository;
 import com.nexusgate.management.repository.UserRepository;
 import com.nexusgate.management.service.AuthenticationService;
 import com.nexusgate.management.service.OrganizationRegistrationService;
+import com.nexusgate.management.dto.AddUserRequest;
+import com.nexusgate.management.dto.UserResponse;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -17,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -29,6 +35,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.Date;
 import java.util.HexFormat;
 import java.util.UUID;
 
@@ -78,6 +85,9 @@ class AuthenticationIntegrationTest {
 
         @Autowired
         private AuthenticationService authenticationService;
+
+        @Autowired
+        private PasswordEncoder passwordEncoder;
 
         @MockitoSpyBean
         private RefreshTokenRepository refreshTokenRepository;
@@ -217,6 +227,117 @@ class AuthenticationIntegrationTest {
                 assertEquals(0, refreshTokenRepository.count());
         }
 
+        @Test
+        void adminWithValidJwtCreatesMemberInOwnOrganization() throws Exception {
+                OrganizationRegistrationResponse registered = register("create-user-org", "owner@example.com");
+                String forgedFields = """
+                                {
+                                  "name": "New Member",
+                                  "email": "new-member@example.com",
+                                  "password": "A-strong-password-123",
+                                  "organizationId": "%s",
+                                  "role": "ADMIN"
+                                }
+                                """.formatted(UUID.randomUUID());
+
+                String body = mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + jwt(
+                                                registered.admin().id(),
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(forgedFields))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.organizationId").value(registered.id().toString()))
+                                .andExpect(jsonPath("$.role").value("MEMBER"))
+                                .andExpect(jsonPath("$.password").doesNotExist())
+                                .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                                .andReturn().getResponse().getContentAsString();
+
+                assertFalse(body.contains("A-strong-password-123"));
+                User created = userRepository.findByEmail("new-member@example.com").orElseThrow();
+                assertEquals(registered.id(), created.getOrganization().getId());
+                assertEquals(UserRole.MEMBER, created.getRole());
+                assertTrue(passwordEncoder.matches("A-strong-password-123", created.getPasswordHash()));
+        }
+
+        @Test
+        void protectedUserCreationRejectsMissingAuthentication() throws Exception {
+                mockMvc.perform(post("/api/v1/users")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("missing-auth@example.com")))
+                                .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        void protectedUserCreationRejectsInvalidSignatureAndExpiredJwt() throws Exception {
+                OrganizationRegistrationResponse registered = register("invalid-jwt-org", "jwt-admin@example.com");
+                String invalidSignature = jwt(
+                                registered.admin().id(),
+                                registered.id(),
+                                Instant.now().plusSeconds(300),
+                                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                String expired = jwt(
+                                registered.admin().id(),
+                                registered.id(),
+                                Instant.now().minusSeconds(30),
+                                TEST_SECRET);
+
+                mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + invalidSignature)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("bad-signature@example.com")))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + expired)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("expired@example.com")))
+                                .andExpect(status().isUnauthorized());
+                assertEquals(1, userRepository.count());
+        }
+
+        @Test
+        void protectedUserCreationRejectsTokenWithCrossTenantClaim() throws Exception {
+                OrganizationRegistrationResponse owner = register("jwt-owner-org", "jwt-owner@example.com");
+                OrganizationRegistrationResponse other = register("jwt-other-org", "jwt-other@example.com");
+                String mismatchedTenantToken = jwt(
+                                owner.admin().id(),
+                                other.id(),
+                                Instant.now().plusSeconds(300),
+                                TEST_SECRET);
+
+                mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + mismatchedTenantToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("cross-tenant@example.com")))
+                                .andExpect(status().isUnauthorized());
+                assertEquals(2, userRepository.count());
+        }
+
+        @Test
+        void authenticatedMemberIsForbiddenFromCreatingUsers() throws Exception {
+                OrganizationRegistrationResponse registered = register("member-forbidden-org", "admin@example.com");
+                Organization organization = organizationRepository.findById(registered.id()).orElseThrow();
+                User member = userRepository.saveAndFlush(new User(
+                                organization,
+                                "Regular Member",
+                                "member@example.com",
+                                passwordEncoder.encode(TEST_PASSWORD),
+                                UserRole.MEMBER));
+
+                mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + jwt(
+                                                member.getId(),
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("forbidden@example.com")))
+                                .andExpect(status().isForbidden());
+                assertFalse(userRepository.existsByEmail("forbidden@example.com"));
+        }
+
         private OrganizationRegistrationResponse register(String slug, String email) {
                 return registrationService.register(new OrganizationRegistrationRequest(
                                 "Test Organization",
@@ -224,6 +345,31 @@ class AuthenticationIntegrationTest {
                                 "Test Admin",
                                 email,
                                 TEST_PASSWORD));
+        }
+
+        private static String jwt(UUID userId, UUID organizationId, Instant expiresAt, String secret) {
+                Instant issuedAt = Instant.now().minusSeconds(1);
+                return Jwts.builder()
+                                .issuer(ISSUER)
+                                .audience().add(AUDIENCE).and()
+                                .issuedAt(Date.from(issuedAt))
+                                .expiration(Date.from(expiresAt))
+                                .claim("userid", userId.toString())
+                                .claim("organizationid", organizationId.toString())
+                                .claim("role", UserRole.ADMIN.name())
+                                .signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)),
+                                                Jwts.SIG.HS256)
+                                .compact();
+        }
+
+        private static String addUserJson(String email) {
+                return """
+                                {
+                                  "name": "New Member",
+                                  "email": "%s",
+                                  "password": "A-strong-password-123"
+                                }
+                                """.formatted(email);
         }
 
         private String loginJson(String email, String password) {
