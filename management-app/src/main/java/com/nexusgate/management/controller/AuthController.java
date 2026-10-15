@@ -3,9 +3,11 @@ package com.nexusgate.management.controller;
 import com.nexusgate.management.dto.LoginRequest;
 import com.nexusgate.management.dto.LoginResponse;
 import com.nexusgate.management.dto.RefreshTokenRequest;
+import com.nexusgate.management.security.AuthenticatedUserPrincipal;
 import com.nexusgate.management.service.AuthenticationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -34,7 +36,7 @@ public class AuthController {
 
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void logout(@Valid @RequestBody RefreshTokenRequest request) {
-        authenticationService.logout(request.refreshToken());
+    public void logout(@AuthenticationPrincipal AuthenticatedUserPrincipal principal) {
+        authenticationService.logout(principal.userId());
     }
 }
