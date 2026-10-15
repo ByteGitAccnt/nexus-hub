@@ -7,6 +7,7 @@ import com.nexusgate.management.model.RefreshToken;
 import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.User;
 import com.nexusgate.management.model.UserRole;
+import com.nexusgate.management.model.UserStatus;
 import com.nexusgate.management.repository.OrganizationRepository;
 import com.nexusgate.management.repository.RefreshTokenRepository;
 import com.nexusgate.management.repository.UserRepository;
@@ -48,6 +49,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -336,6 +338,138 @@ class AuthenticationIntegrationTest {
                                 .content(addUserJson("forbidden@example.com")))
                                 .andExpect(status().isForbidden());
                 assertFalse(userRepository.existsByEmail("forbidden@example.com"));
+        }
+
+        @Test
+        void adminCanExplicitlyDeactivateAndReactivateMemberWithoutDeletingThem() throws Exception {
+                OrganizationRegistrationResponse registered = register("status-org", "status-admin@example.com");
+                String adminToken = jwt(
+                                registered.admin().id(),
+                                registered.id(),
+                                Instant.now().plusSeconds(600),
+                                TEST_SECRET);
+                String createdBody = mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + adminToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("status-member@example.com")))
+                                .andExpect(status().isCreated())
+                                .andReturn().getResponse().getContentAsString();
+                UUID memberId = UUID.fromString(responseString(createdBody, "id"));
+                long usersBeforeStatusChange = userRepository.count();
+                String statusUrl = "/api/v1/users/" + memberId + "/status";
+
+                mockMvc.perform(put(statusUrl)
+                                .header("Authorization", "Bearer " + adminToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":false}"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("DISABLED"))
+                                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+                assertEquals(UserStatus.DISABLED, userRepository.findById(memberId).orElseThrow().getStatus());
+                assertEquals(usersBeforeStatusChange, userRepository.count());
+
+                mockMvc.perform(put(statusUrl)
+                                .header("Authorization", "Bearer " + adminToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":false}"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("DISABLED"));
+
+                mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + jwt(
+                                                memberId,
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("disabled-token@example.com")))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loginJson("status-member@example.com", TEST_PASSWORD)))
+                                .andExpect(status().isUnauthorized());
+
+                mockMvc.perform(put(statusUrl)
+                                .header("Authorization", "Bearer " + adminToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":true}"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("ACTIVE"));
+                assertEquals(UserStatus.ACTIVE, userRepository.findById(memberId).orElseThrow().getStatus());
+                assertEquals(usersBeforeStatusChange, userRepository.count());
+
+                mockMvc.perform(post("/api/v1/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loginJson("status-member@example.com", TEST_PASSWORD)))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        void adminCannotChangeMemberStatusInAnotherOrganization() throws Exception {
+                OrganizationRegistrationResponse owner = register("status-owner-org", "owner-status@example.com");
+                OrganizationRegistrationResponse other = register("status-other-org", "other-status@example.com");
+                String ownerToken = jwt(
+                                owner.admin().id(),
+                                owner.id(),
+                                Instant.now().plusSeconds(600),
+                                TEST_SECRET);
+                String otherToken = jwt(
+                                other.admin().id(),
+                                other.id(),
+                                Instant.now().plusSeconds(600),
+                                TEST_SECRET);
+                String memberBody = mockMvc.perform(post("/api/v1/users")
+                                .header("Authorization", "Bearer " + otherToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(addUserJson("other-member@example.com")))
+                                .andExpect(status().isCreated())
+                                .andReturn().getResponse().getContentAsString();
+                UUID otherMemberId = UUID.fromString(responseString(memberBody, "id"));
+
+                mockMvc.perform(put("/api/v1/users/" + otherMemberId + "/status")
+                                .header("Authorization", "Bearer " + ownerToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":false}"))
+                                .andExpect(status().isNotFound())
+                                .andExpect(jsonPath("$.detail").value("Member not found"));
+                assertEquals(UserStatus.ACTIVE, userRepository.findById(otherMemberId).orElseThrow().getStatus());
+        }
+
+        @Test
+        void statusEndpointRejectsMissingAuthenticationNonAdminAndInvalidBoolean() throws Exception {
+                OrganizationRegistrationResponse registered = register("status-auth-org", "status-auth@example.com");
+                Organization organization = organizationRepository.findById(registered.id()).orElseThrow();
+                User member = userRepository.saveAndFlush(new User(
+                                organization,
+                                "Status Member",
+                                "status-member-auth@example.com",
+                                passwordEncoder.encode(TEST_PASSWORD),
+                                UserRole.MEMBER));
+                String url = "/api/v1/users/" + member.getId() + "/status";
+
+                mockMvc.perform(put(url)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":false}"))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(put(url)
+                                .header("Authorization", "Bearer " + jwt(
+                                                member.getId(),
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"active\":false}"))
+                                .andExpect(status().isForbidden());
+                mockMvc.perform(put(url)
+                                .header("Authorization", "Bearer " + jwt(
+                                                registered.admin().id(),
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                                .andExpect(status().isBadRequest());
+                assertEquals(UserStatus.ACTIVE, userRepository.findById(member.getId()).orElseThrow().getStatus());
         }
 
         private OrganizationRegistrationResponse register(String slug, String email) {
