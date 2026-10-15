@@ -3,18 +3,23 @@ package com.nexusgate.management.service;
 import com.nexusgate.management.dto.AddUserRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationResponse;
+import com.nexusgate.management.dto.UserResponse;
 import com.nexusgate.management.exception.ResourceConflictException;
 import com.nexusgate.management.model.Organization;
+import com.nexusgate.management.model.OrganizationStatus;
 import com.nexusgate.management.model.User;
 import com.nexusgate.management.model.UserRole;
+import com.nexusgate.management.model.UserStatus;
 import com.nexusgate.management.repository.OrganizationRepository;
 import com.nexusgate.management.repository.UserRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 public class OrganizationRegistrationService {
@@ -63,19 +68,37 @@ public class OrganizationRegistrationService {
     }
 
     @Transactional
-    public User addUser(Organization organization, AddUserRequest request) {
+    public UserResponse addUserForAdmin(UUID actorUserId, AddUserRequest request) {
+        User actor = userRepository.findById(actorUserId)
+                .orElseThrow(() -> new AccessDeniedException("Active organization administrator required"));
+        Organization organization = actor.getOrganization();
+        if (actor.getRole() != UserRole.ADMIN
+                || actor.getStatus() != UserStatus.ACTIVE
+                || organization.getStatus() != OrganizationStatus.ACTIVE) {
+            throw new AccessDeniedException("Active organization administrator required");
+        }
+
         String email = normalize(request.email());
         if (userRepository.existsByEmail(email)) {
             throw new ResourceConflictException("Email is already registered");
         }
         try {
-            return userRepository.saveAndFlush(new User(
+            User created = userRepository.saveAndFlush(new User(
                     organization,
                     request.name().trim(),
                     email,
                     passwordEncoder.encode(request.password()),
                     UserRole.MEMBER
             ));
+            return new UserResponse(
+                    created.getId(),
+                    organization.getId(),
+                    created.getName(),
+                    created.getEmail(),
+                    created.getRole(),
+                    created.getStatus(),
+                    created.getCreatedAt()
+            );
         } catch (DataIntegrityViolationException exception) {
             throw new ResourceConflictException("Email is already registered");
         }

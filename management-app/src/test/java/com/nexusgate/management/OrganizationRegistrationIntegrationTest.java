@@ -1,6 +1,10 @@
 package com.nexusgate.management;
 
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
+import com.nexusgate.management.dto.OrganizationRegistrationResponse;
+import com.nexusgate.management.dto.AddUserRequest;
+import com.nexusgate.management.dto.UserResponse;
+import com.nexusgate.management.exception.ResourceConflictException;
 import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.User;
 import com.nexusgate.management.model.UserRole;
@@ -12,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -20,6 +26,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import jakarta.validation.Validator;
 
 import java.util.UUID;
 
@@ -58,6 +65,12 @@ class OrganizationRegistrationIntegrationTest {
 
     @Autowired
     private OrganizationRegistrationService registrationService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private Validator validator;
 
     @MockitoSpyBean
     private UserRepository userRepository;
@@ -185,23 +198,95 @@ class OrganizationRegistrationIntegrationTest {
     }
 
     @Test
-    void internalAddUserFoundationAssignsMemberToProvidedOrganization() {
-        Organization organization = organizationRepository.saveAndFlush(
-                new Organization("Owner Org", "owner-org")
+    void adminCreationServiceAssignsMemberAndHashesPasswordWithinAdminOrganization() {
+        OrganizationRegistrationResponse organization = registerOrganization("owner-org", "owner@example.com");
+
+        UserResponse created = registrationService.addUserForAdmin(
+                organization.admin().id(),
+                new AddUserRequest("New Member", "MEMBER@example.com", "A-strong-password-123")
         );
 
-        User created = registrationService.addUser(
-                organization,
-                new com.nexusgate.management.dto.AddUserRequest(
-                        "New Member",
-                        "MEMBER@example.com",
-                        "A-strong-password-123"
-                )
+        assertEquals(UserRole.MEMBER, created.role());
+        assertEquals(organization.id(), created.organizationId());
+        assertEquals("member@example.com", created.email());
+        assertFalse(created.toString().contains("password"));
+        User persisted = userRepository.findByEmail("member@example.com").orElseThrow();
+        assertNotEquals("A-strong-password-123", persisted.getPasswordHash());
+        assertTrue(passwordEncoder.matches("A-strong-password-123", persisted.getPasswordHash()));
+    }
+
+    @Test
+    void adminCreationServiceRejectsDuplicateEmailAcrossOrganizations() {
+        OrganizationRegistrationResponse first = registerOrganization("first-org", "first-admin@example.com");
+        registerOrganization("second-org", "second-admin@example.com");
+
+        assertThrows(ResourceConflictException.class, () -> registrationService.addUserForAdmin(
+                first.admin().id(),
+                new AddUserRequest("Duplicate", "SECOND-ADMIN@example.com", "A-strong-password-123")
+        ));
+        assertEquals(2, userRepository.count());
+    }
+
+    @Test
+    void addUserRequestValidationRejectsMissingOrMalformedFields() {
+        AddUserRequest invalid = new AddUserRequest("", "not-an-email", "short");
+
+        assertFalse(validator.validate(invalid).isEmpty());
+    }
+
+    @Test
+    void adminCreationServiceRejectsNonAdminCaller() {
+        OrganizationRegistrationResponse organization = registerOrganization("non-admin-org", "admin@example.com");
+        Organization persistedOrganization = organizationRepository.findById(organization.id()).orElseThrow();
+        User member = userRepository.saveAndFlush(new User(
+                persistedOrganization,
+                "Member User",
+                "member@example.com",
+                passwordEncoder.encode("A-strong-password-123"),
+                UserRole.MEMBER
+        ));
+
+        assertThrows(AccessDeniedException.class, () -> registrationService.addUserForAdmin(
+                member.getId(),
+                new AddUserRequest("Another Member", "another@example.com", "A-strong-password-123")
+        ));
+        assertFalse(userRepository.existsByEmail("another@example.com"));
+    }
+
+    @Test
+    void creationIsScopedToAuthenticatedAdminsPersistedOrganization() {
+        OrganizationRegistrationResponse callerOrganization = registerOrganization(
+                "caller-org",
+                "caller-admin@example.com"
+        );
+        OrganizationRegistrationResponse otherOrganization = registerOrganization(
+                "other-org",
+                "other-admin@example.com"
+        );
+        AddUserRequest request = new AddUserRequest(
+                "Scoped Member",
+                "scoped@example.com",
+                "A-strong-password-123"
         );
 
-        assertEquals(UserRole.MEMBER, created.getRole());
-        assertEquals(organization.getId(), created.getOrganization().getId());
-        assertEquals("member@example.com", created.getEmail());
+        UserResponse created = registrationService.addUserForAdmin(callerOrganization.admin().id(), request);
+
+        assertEquals(callerOrganization.id(), created.organizationId());
+        assertEquals(UserRole.MEMBER, created.role());
+        User persisted = userRepository.findByEmail("scoped@example.com").orElseThrow();
+        assertEquals(callerOrganization.id(), persisted.getOrganization().getId());
+        assertNotEquals(otherOrganization.id(), created.organizationId());
+        assertFalse(userRepository.findByEmail("other-admin@example.com").isEmpty());
+    }
+
+    private OrganizationRegistrationResponse registerOrganization(String slug, String email) {
+        return registrationService.register(new OrganizationRegistrationRequest(
+                "Test Organization",
+                slug,
+                "Organization Admin",
+                email,
+                "A-strong-password-123"
+        ));
     }
 
     private void register(String slug, String email) throws Exception {
