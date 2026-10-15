@@ -57,7 +57,7 @@ The gateway is built using **Spring Cloud Gateway** with reactive (WebFlux) prog
 
 **Critical Responsibilities:**
 
-- **NexusGate handles**:  Request routing, reverse proxying, JWT verification, issuer/audience validation, identity extraction, principal propagation, and centralized gateway-level policies
+- **NexusGate handles**: Request routing, reverse proxying, JWT verification, issuer/audience validation, identity extraction, principal propagation, and centralized gateway-level policies
 - **Auth Service handles**: Access token generation, refresh token validation, token expiration management, and new token issuance
 - **Your responsibility**: Implement, maintain, and configure the Auth Service according to your security requirements
 
