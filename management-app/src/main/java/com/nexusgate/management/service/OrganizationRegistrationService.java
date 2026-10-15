@@ -3,8 +3,10 @@ package com.nexusgate.management.service;
 import com.nexusgate.management.dto.AddUserRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationResponse;
+import com.nexusgate.management.dto.UpdateUserStatusRequest;
 import com.nexusgate.management.dto.UserResponse;
 import com.nexusgate.management.exception.ResourceConflictException;
+import com.nexusgate.management.exception.ResourceNotFoundException;
 import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.OrganizationStatus;
 import com.nexusgate.management.model.User;
@@ -102,6 +104,39 @@ public class OrganizationRegistrationService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResourceConflictException("Email is already registered");
         }
+    }
+
+    @Transactional
+    public UserResponse setMemberStatusForAdmin(
+            UUID actorUserId,
+            UUID targetUserId,
+            UpdateUserStatusRequest request
+    ) {
+        User actor = userRepository.findById(actorUserId)
+                .orElseThrow(() -> new AccessDeniedException("Active organization administrator required"));
+        Organization organization = actor.getOrganization();
+        if (actor.getRole() != UserRole.ADMIN
+                || actor.getStatus() != UserStatus.ACTIVE
+                || organization.getStatus() != OrganizationStatus.ACTIVE) {
+            throw new AccessDeniedException("Active organization administrator required");
+        }
+
+        User target = userRepository.findById(targetUserId)
+                .filter(user -> user.getOrganization().getId().equals(organization.getId()))
+                .filter(user -> user.getRole() == UserRole.MEMBER)
+                .orElseThrow(() -> new ResourceNotFoundException("Member not found"));
+
+        target.setStatus(request.active() ? UserStatus.ACTIVE : UserStatus.DISABLED);
+        User updated = userRepository.saveAndFlush(target);
+        return new UserResponse(
+                updated.getId(),
+                organization.getId(),
+                updated.getName(),
+                updated.getEmail(),
+                updated.getRole(),
+                updated.getStatus(),
+                updated.getCreatedAt()
+        );
     }
 
     private static String normalize(String value) {
