@@ -15,7 +15,10 @@ public class ManagementSecurityConfiguration {
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/v1/organizations/register").permitAll()
+                        .requestMatchers(
+                                "/api/v1/organizations/register",
+                                "/api/v1/auth/login"
+                        ).permitAll()
                         .anyRequest().denyAll()
                 )
                 .build();

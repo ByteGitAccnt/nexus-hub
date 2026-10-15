@@ -14,6 +14,14 @@ public class ApiExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
     }
 
+    @ExceptionHandler(InvalidCredentialsException.class)
+    ProblemDetail handleInvalidCredentials(InvalidCredentialsException exception) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED,
+                "Invalid email or password"
+        );
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     ProblemDetail handleValidation(MethodArgumentNotValidException exception) {
         return ProblemDetail.forStatusAndDetail(

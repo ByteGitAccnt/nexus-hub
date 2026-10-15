@@ -17,3 +17,11 @@ spring:
 
 server:
   port: 8090
+
+management:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:http://localhost:8090}
+    audience: ${JWT_AUDIENCE:nexushub}
+    access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:PT15M}
+    refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:P30D}
