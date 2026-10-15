@@ -18,6 +18,7 @@ CREATE TABLE users (
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_users_email UNIQUE (email),
+    CONSTRAINT uk_users_id_organization UNIQUE (id, organization_id),
     CONSTRAINT ck_users_email_normalized CHECK (email = lower(email)),
     CONSTRAINT ck_users_role CHECK (role IN ('ADMIN', 'MEMBER')),
     CONSTRAINT ck_users_status CHECK (status IN ('ACTIVE', 'DISABLED'))
@@ -54,3 +55,28 @@ CREATE TABLE api_key_service_permissions (
 
 CREATE INDEX ix_api_key_service_permissions_service_slug
     ON api_key_service_permissions (service_slug);
+
+CREATE TABLE refresh_tokens (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL,
+    organization_id UUID NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    replaced_by_token_id UUID,
+    CONSTRAINT uk_refresh_tokens_token_hash UNIQUE (token_hash),
+    CONSTRAINT ck_refresh_tokens_hash_sha256 CHECK (length(token_hash) = 64),
+    CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id),
+    CONSTRAINT fk_refresh_tokens_organization
+        FOREIGN KEY (organization_id) REFERENCES organizations (id),
+    CONSTRAINT fk_refresh_tokens_user_organization
+        FOREIGN KEY (user_id, organization_id)
+        REFERENCES users (id, organization_id),
+    CONSTRAINT fk_refresh_tokens_replacement
+        FOREIGN KEY (replaced_by_token_id)
+        REFERENCES refresh_tokens (id)
+);
+
+CREATE INDEX ix_refresh_tokens_user_id ON refresh_tokens (user_id);
+CREATE INDEX ix_refresh_tokens_organization_id ON refresh_tokens (organization_id);
