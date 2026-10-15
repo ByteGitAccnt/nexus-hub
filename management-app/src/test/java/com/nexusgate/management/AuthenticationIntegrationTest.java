@@ -8,6 +8,7 @@ import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.User;
 import com.nexusgate.management.model.UserRole;
 import com.nexusgate.management.model.UserStatus;
+import com.nexusgate.management.model.OrganizationStatus;
 import com.nexusgate.management.repository.OrganizationRepository;
 import com.nexusgate.management.repository.RefreshTokenRepository;
 import com.nexusgate.management.repository.UserRepository;
@@ -39,6 +40,10 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -405,6 +410,126 @@ class AuthenticationIntegrationTest {
         }
 
         @Test
+        void refreshRotatesTokenAndLinksOldHashToReplacement() throws Exception {
+                register("rotation-org", "rotation-admin@example.com");
+                String oldRawToken = responseString(
+                                mockMvc.perform(post("/api/v1/auth/login")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .content(loginJson("rotation-admin@example.com", TEST_PASSWORD)))
+                                                .andExpect(status().isOk())
+                                                .andReturn().getResponse().getContentAsString(),
+                                "refreshToken");
+                String oldHash = sha256Hex(oldRawToken);
+
+                String refreshedBody = mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(oldRawToken)))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                                .andReturn().getResponse().getContentAsString();
+
+                String newRawToken = responseString(refreshedBody, "refreshToken");
+                String newTokenHash = sha256Hex(newRawToken);
+                assertNotEquals(oldRawToken, newRawToken);
+                assertFalse(refreshedBody.contains(oldHash));
+                RefreshToken consumed = refreshTokenRepository.findAll().stream()
+                                .filter(token -> token.getTokenHash().equals(oldHash))
+                                .findFirst().orElseThrow();
+                RefreshToken replacement = refreshTokenRepository.findAll().stream()
+                                .filter(token -> token.getTokenHash().equals(newTokenHash))
+                                .findFirst().orElseThrow();
+                assertTrue(consumed.getRevokedAt() != null);
+                assertEquals(replacement.getId(), consumed.getReplacedByToken().getId());
+                assertEquals(newTokenHash, replacement.getTokenHash());
+
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(oldRawToken)))
+                                .andExpect(status().isUnauthorized())
+                                .andExpect(jsonPath("$.detail").value("Invalid refresh token"));
+        }
+
+        @Test
+        void refreshRejectsExpiredTokensAndInactiveUsersOrOrganizations() throws Exception {
+                OrganizationRegistrationResponse userOwner = register("expired-refresh-org", "expired@example.com");
+                Organization organization = organizationRepository.findById(userOwner.id()).orElseThrow();
+                User user = userRepository.findById(userOwner.admin().id()).orElseThrow();
+
+                String expiredRawToken = "expired-refresh-secret";
+                refreshTokenRepository.saveAndFlush(new RefreshToken(
+                                user,
+                                organization,
+                                sha256Hex(expiredRawToken),
+                                Instant.now().minusSeconds(10)));
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(expiredRawToken)))
+                                .andExpect(status().isUnauthorized());
+                refreshTokenRepository.deleteAll();
+
+                String inactiveUserToken = loginAndGetRefreshToken("expired@example.com");
+                user.setStatus(UserStatus.DISABLED);
+                userRepository.saveAndFlush(user);
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(inactiveUserToken)))
+                                .andExpect(status().isUnauthorized());
+
+                user.setStatus(UserStatus.ACTIVE);
+                userRepository.saveAndFlush(user);
+                String inactiveOrganizationToken = loginAndGetRefreshToken("expired@example.com");
+                organization.setStatus(OrganizationStatus.SUSPENDED);
+                organizationRepository.saveAndFlush(organization);
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(inactiveOrganizationToken)))
+                                .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        void logoutRevokesRefreshTokenIdempotently() throws Exception {
+                register("logout-org", "logout-admin@example.com");
+                String rawToken = loginAndGetRefreshToken("logout-admin@example.com");
+
+                mockMvc.perform(post("/api/v1/auth/logout")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(rawToken)))
+                                .andExpect(status().isNoContent());
+                mockMvc.perform(post("/api/v1/auth/logout")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(rawToken)))
+                                .andExpect(status().isNoContent());
+
+                String tokenHash = sha256Hex(rawToken);
+                assertTrue(refreshTokenRepository.findAll().stream()
+                                .filter(token -> token.getTokenHash().equals(tokenHash))
+                                .findFirst().orElseThrow().getRevokedAt() != null);
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(rawToken)))
+                                .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        void concurrentRefreshAllowsOnlyOneUseOfTheSameToken() throws Exception {
+                register("concurrent-refresh-org", "concurrent@example.com");
+                String rawToken = loginAndGetRefreshToken("concurrent@example.com");
+                CountDownLatch ready = new CountDownLatch(2);
+                CountDownLatch start = new CountDownLatch(1);
+                ExecutorService executor = Executors.newFixedThreadPool(2);
+                try {
+                        Future<Boolean> first = executor.submit(() -> refreshOnce(rawToken, ready, start));
+                        Future<Boolean> second = executor.submit(() -> refreshOnce(rawToken, ready, start));
+                        ready.await();
+                        start.countDown();
+                        assertNotEquals(first.get(), second.get());
+                } finally {
+                        executor.shutdownNow();
+                }
+        }
+
+        @Test
         void adminCannotChangeMemberStatusInAnotherOrganization() throws Exception {
                 OrganizationRegistrationResponse owner = register("status-owner-org", "owner-status@example.com");
                 OrganizationRegistrationResponse other = register("status-other-org", "other-status@example.com");
@@ -513,6 +638,33 @@ class AuthenticationIntegrationTest {
                                   "password": "%s"
                                 }
                                 """.formatted(email, password);
+        }
+
+        private String loginAndGetRefreshToken(String email) throws Exception {
+                return responseString(mockMvc.perform(post("/api/v1/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loginJson(email, TEST_PASSWORD)))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString(), "refreshToken");
+        }
+
+        private String refreshJson(String refreshToken) {
+                return """
+                                {
+                                  "refreshToken": "%s"
+                                }
+                                """.formatted(refreshToken);
+        }
+
+        private boolean refreshOnce(String refreshToken, CountDownLatch ready, CountDownLatch start) throws Exception {
+                ready.countDown();
+                start.await();
+                try {
+                        authenticationService.refresh(refreshToken);
+                        return true;
+                } catch (com.nexusgate.management.exception.InvalidRefreshTokenException exception) {
+                        return false;
+                }
         }
 
         private static String responseString(String json, String field) {
