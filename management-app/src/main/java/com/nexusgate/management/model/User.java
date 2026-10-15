@@ -35,6 +35,9 @@ public class User {
     @Column(nullable = false, length = 320)
     private String email;
 
+    @Column(nullable = false, length = 150)
+    private String name;
+
     @Column(name = "password_hash", nullable = false, length = 100)
     private String passwordHash;
 
@@ -52,8 +55,9 @@ public class User {
     protected User() {
     }
 
-    public User(Organization organization, String normalizedEmail, String passwordHash, UserRole role) {
+    public User(Organization organization, String name, String normalizedEmail, String passwordHash, UserRole role) {
         this.organization = organization;
+        this.name = name;
         this.email = normalizedEmail;
         this.passwordHash = passwordHash;
         this.role = role;
@@ -76,6 +80,10 @@ public class User {
 
     public String getEmail() {
         return email;
+    }
+
+    public String getName() {
+        return name;
     }
 
     public String getPasswordHash() {
