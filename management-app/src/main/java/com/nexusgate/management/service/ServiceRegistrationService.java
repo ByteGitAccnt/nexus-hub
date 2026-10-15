@@ -3,6 +3,7 @@ package com.nexusgate.management.service;
 import com.nexusgate.management.dto.CreateServiceRequest;
 import com.nexusgate.management.dto.RegisteredServiceResponse;
 import com.nexusgate.management.exception.ResourceConflictException;
+import com.nexusgate.management.exception.ResourceNotFoundException;
 import com.nexusgate.management.model.Organization;
 import com.nexusgate.management.model.OrganizationStatus;
 import com.nexusgate.management.model.RegisteredService;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import java.util.List;
 
 @Service
 public class ServiceRegistrationService {
@@ -58,6 +60,21 @@ public class ServiceRegistrationService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResourceConflictException("A service with this name is already registered");
         }
+    }
+
+    @Transactional(readOnly = true)
+    public List<RegisteredServiceResponse> listForOrganization(UUID organizationId) {
+        return registeredServiceRepository.findAllByOrganizationId(organizationId).stream()
+                .map(ServiceRegistrationService::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public RegisteredServiceResponse getForOrganization(UUID organizationId, UUID serviceId) {
+        RegisteredService service = registeredServiceRepository
+                .findByIdAndOrganizationId(serviceId, organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Service not found"));
+        return toResponse(service);
     }
 
     private static RegisteredServiceResponse toResponse(RegisteredService service) {
