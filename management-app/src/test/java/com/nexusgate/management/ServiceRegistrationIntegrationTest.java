@@ -3,6 +3,7 @@ package com.nexusgate.management;
 import com.nexusgate.management.dto.AddUserRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationResponse;
+import com.nexusgate.management.model.ServiceAuthMode;
 import com.nexusgate.management.model.RegisteredService;
 import com.nexusgate.management.repository.OrganizationRepository;
 import com.nexusgate.management.repository.RegisteredServiceRepository;
@@ -32,6 +33,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -188,6 +190,47 @@ class ServiceRegistrationIntegrationTest {
         assertEquals(0, registeredServiceRepository.count());
     }
 
+    @Test
+    void adminsAndMembersCanListAndGetOnlyTheirOrganizationsServices() throws Exception {
+        OrganizationRegistrationResponse owner = register("read-owner-org", "read-owner@example.com");
+        OrganizationRegistrationResponse other = register("read-other-org", "read-other@example.com");
+        var member = organizationRegistrationService.addUserForAdmin(
+                owner.admin().id(),
+                new AddUserRequest("Reader", "reader@example.com", TEST_PASSWORD));
+        RegisteredService ownedService = registerService(owner, "Owned Service");
+        RegisteredService otherService = registerService(other, "Other Service");
+
+        for (UUID readerId : new UUID[]{owner.admin().id(), member.id()}) {
+            String accessToken = jwt(readerId, owner.id());
+            mockMvc.perform(get("/api/v1/services")
+                            .header("Authorization", "Bearer " + accessToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.length()").value(1))
+                    .andExpect(jsonPath("$[0].id").value(ownedService.getId().toString()))
+                    .andExpect(jsonPath("$[0].organizationId").value(owner.id().toString()));
+            mockMvc.perform(get("/api/v1/services/" + ownedService.getId())
+                            .header("Authorization", "Bearer " + accessToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(ownedService.getId().toString()))
+                    .andExpect(jsonPath("$.name").value("Owned Service"));
+            mockMvc.perform(get("/api/v1/services/" + otherService.getId())
+                            .header("Authorization", "Bearer " + accessToken))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
+    void returnsEmptyListForOrganizationWithoutServices() throws Exception {
+        OrganizationRegistrationResponse emptyOrganization = register(
+                "empty-service-org", "empty-service@example.com");
+
+        mockMvc.perform(get("/api/v1/services")
+                        .header("Authorization", "Bearer " + jwt(
+                                emptyOrganization.admin().id(), emptyOrganization.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
     private OrganizationRegistrationResponse register(String slug, String email) {
         return organizationRegistrationService.register(new OrganizationRegistrationRequest(
                 "Service Test Organization",
@@ -195,6 +238,17 @@ class ServiceRegistrationIntegrationTest {
                 "Organization Admin",
                 email,
                 TEST_PASSWORD));
+    }
+
+    private RegisteredService registerService(OrganizationRegistrationResponse owner, String name) {
+        var organization = organizationRepository.findById(owner.id()).orElseThrow();
+        return registeredServiceRepository.saveAndFlush(new RegisteredService(
+                organization,
+                name,
+                "https://service.example.test",
+                "/" + name.toLowerCase().replace(' ', '-'),
+                null,
+                ServiceAuthMode.PUBLIC));
     }
 
     private static String serviceJson(
