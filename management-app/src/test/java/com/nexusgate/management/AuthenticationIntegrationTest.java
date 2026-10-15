@@ -488,27 +488,69 @@ class AuthenticationIntegrationTest {
         }
 
         @Test
-        void logoutRevokesRefreshTokenIdempotently() throws Exception {
-                register("logout-org", "logout-admin@example.com");
-                String rawToken = loginAndGetRefreshToken("logout-admin@example.com");
+        void logoutWithAccessTokenRevokesAllOwnRefreshSessionsOnlyAndIsIdempotent() throws Exception {
+                OrganizationRegistrationResponse owner = register("logout-org", "logout-admin@example.com");
+                register("logout-other-org", "other-logout-admin@example.com");
+
+                String ownerLoginBody = mockMvc.perform(post("/api/v1/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(loginJson("logout-admin@example.com", TEST_PASSWORD)))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString();
+                String ownerAccessToken = responseString(ownerLoginBody, "accessToken");
+                String firstRawToken = responseString(ownerLoginBody, "refreshToken");
+                String secondRawToken = loginAndGetRefreshToken("logout-admin@example.com");
+                String otherRawToken = loginAndGetRefreshToken("other-logout-admin@example.com");
 
                 mockMvc.perform(post("/api/v1/auth/logout")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(refreshJson(rawToken)))
+                                .header("Authorization", "Bearer " + ownerAccessToken))
                                 .andExpect(status().isNoContent());
                 mockMvc.perform(post("/api/v1/auth/logout")
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(refreshJson(rawToken)))
+                                .header("Authorization", "Bearer " + ownerAccessToken))
                                 .andExpect(status().isNoContent());
 
-                String tokenHash = sha256Hex(rawToken);
                 assertTrue(refreshTokenRepository.findAll().stream()
-                                .filter(token -> token.getTokenHash().equals(tokenHash))
-                                .findFirst().orElseThrow().getRevokedAt() != null);
+                                .filter(token -> token.getUser().getId().equals(owner.admin().id()))
+                                .allMatch(token -> token.getRevokedAt() != null));
+                assertTrue(refreshTokenRepository.findAll().stream()
+                                .filter(token -> !token.getUser().getId().equals(owner.admin().id()))
+                                .allMatch(token -> token.getRevokedAt() == null));
+
                 mockMvc.perform(post("/api/v1/auth/refresh")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(refreshJson(rawToken)))
+                                .content(refreshJson(firstRawToken)))
                                 .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(secondRawToken)))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(refreshJson(otherRawToken)))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        void logoutRequiresValidUnexpiredAccessTokenAndDoesNotRequireRequestBody() throws Exception {
+                OrganizationRegistrationResponse registered = register("logout-auth-org", "logout-auth@example.com");
+                String missingTokenHash = sha256Hex(loginAndGetRefreshToken("logout-auth@example.com"));
+
+                mockMvc.perform(post("/api/v1/auth/logout"))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/auth/logout")
+                                .header("Authorization", "Bearer not-a-jwt"))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/v1/auth/logout")
+                                .header("Authorization", "Bearer " + jwt(
+                                                registered.admin().id(),
+                                                registered.id(),
+                                                Instant.now().minusSeconds(10),
+                                                TEST_SECRET)))
+                                .andExpect(status().isUnauthorized());
+
+                assertTrue(refreshTokenRepository.findAll().stream()
+                                .filter(token -> token.getTokenHash().equals(missingTokenHash))
+                                .findFirst().orElseThrow().getRevokedAt() == null);
         }
 
         @Test

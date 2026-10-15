@@ -23,8 +23,8 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Locale;
+import java.util.UUID;
 
 @Service
 public class AuthenticationService {
@@ -124,13 +124,8 @@ public class AuthenticationService {
     }
 
     @Transactional
-    public void logout(String rawRefreshToken) {
-        refreshTokenRepository.findByTokenHashForUpdate(hashRefreshToken(rawRefreshToken))
-                .filter(token -> token.getRevokedAt() == null)
-                .ifPresent(token -> {
-                    token.revoke(null);
-                    refreshTokenRepository.saveAndFlush(token);
-                });
+    public void logout(UUID userId) {
+        refreshTokenRepository.revokeActiveTokensForUser(userId, Instant.now());
     }
 
     private static String generateRefreshToken() {
