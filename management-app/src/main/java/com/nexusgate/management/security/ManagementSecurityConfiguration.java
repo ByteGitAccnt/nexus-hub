@@ -42,6 +42,8 @@ public class ManagementSecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/users/*/status").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/services").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/services/*").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/status").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/v1/services", "/api/v1/services/*")
                         .hasAnyRole("ADMIN", "MEMBER")
                         .anyRequest().authenticated()

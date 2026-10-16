@@ -2,6 +2,7 @@ package com.nexusgate.management.controller;
 
 import com.nexusgate.management.dto.CreateServiceRequest;
 import com.nexusgate.management.dto.RegisteredServiceResponse;
+import com.nexusgate.management.dto.UpdateServiceStatusRequest;
 import com.nexusgate.management.security.AuthenticatedUserPrincipal;
 import com.nexusgate.management.service.ServiceRegistrationService;
 import jakarta.validation.Valid;
@@ -10,6 +11,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -50,5 +53,23 @@ public class ServiceController {
             @PathVariable UUID serviceId
     ) {
         return serviceRegistrationService.getForOrganization(principal.organizationId(), serviceId);
+    }
+
+    @PutMapping("/{serviceId}")
+    public RegisteredServiceResponse update(
+            @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
+            @PathVariable UUID serviceId,
+            @Valid @RequestBody CreateServiceRequest request
+    ) {
+        return serviceRegistrationService.update(principal.userId(), serviceId, request);
+    }
+
+    @PatchMapping("/{serviceId}/status")
+    public RegisteredServiceResponse updateStatus(
+            @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
+            @PathVariable UUID serviceId,
+            @Valid @RequestBody UpdateServiceStatusRequest request
+    ) {
+        return serviceRegistrationService.setActive(principal.userId(), serviceId, request.active());
     }
 }

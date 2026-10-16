@@ -140,4 +140,22 @@ public class RegisteredService {
     public Instant getUpdatedAt() {
         return updatedAt;
     }
+
+    public void updateConfiguration(
+            String name,
+            String targetUrl,
+            String basePath,
+            String targetPath,
+            ServiceAuthMode authMode
+    ) {
+        this.name = name;
+        this.targetUrl = targetUrl;
+        this.basePath = basePath;
+        this.targetPath = targetPath;
+        this.authMode = authMode;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
 }
