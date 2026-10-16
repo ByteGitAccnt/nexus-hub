@@ -34,6 +34,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -229,6 +231,171 @@ class ServiceRegistrationIntegrationTest {
                                 emptyOrganization.admin().id(), emptyOrganization.id())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void adminUpdatesServiceConfigurationAndRejectsDuplicateName() throws Exception {
+        OrganizationRegistrationResponse owner = register("update-service-org", "update-service@example.com");
+        RegisteredService service = registerService(owner, "Original");
+        RegisteredService duplicate = registerService(owner, "Taken");
+        Instant initialUpdatedAt = service.getUpdatedAt();
+
+        Thread.sleep(10);
+        mockMvc.perform(put("/api/v1/services/" + service.getId())
+                        .header("Authorization", "Bearer " + jwt(owner.admin().id(), owner.id()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson(
+                                "Updated",
+                                "https://updated.example.test/v2",
+                                "/updated",
+                                "/v2",
+                                "API_KEY")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.organizationId").value(owner.id().toString()))
+                .andExpect(jsonPath("$.name").value("Updated"))
+                .andExpect(jsonPath("$.targetUrl").value("https://updated.example.test/v2"))
+                .andExpect(jsonPath("$.basePath").value("/updated"))
+                .andExpect(jsonPath("$.targetPath").value("/v2"))
+                .andExpect(jsonPath("$.authMode").value("API_KEY"));
+
+        RegisteredService updated = registeredServiceRepository.findById(service.getId()).orElseThrow();
+        assertTrue(updated.getUpdatedAt().isAfter(initialUpdatedAt));
+        assertEquals(ServiceAuthMode.API_KEY, updated.getAuthMode());
+
+        mockMvc.perform(put("/api/v1/services/" + duplicate.getId())
+                        .header("Authorization", "Bearer " + jwt(owner.admin().id(), owner.id()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson(
+                                "Updated",
+                                "https://taken.example.test",
+                                "/taken",
+                                null,
+                                "PUBLIC")))
+                .andExpect(status().isConflict());
+        assertEquals("Taken", registeredServiceRepository.findById(duplicate.getId()).orElseThrow().getName());
+    }
+
+    @Test
+    void updateRejectsInvalidFieldsAndUrlSyntax() throws Exception {
+        OrganizationRegistrationResponse owner = register("invalid-update-org", "invalid-update@example.com");
+        RegisteredService service = registerService(owner, "Valid");
+        String accessToken = jwt(owner.admin().id(), owner.id());
+        String[] invalidPayloads = {
+                serviceJson("", "https://valid.example.test", "/valid", null, "PUBLIC"),
+                serviceJson("Bad URL", "ftp://bad.example.test", "/bad-url", null, "PUBLIC"),
+                serviceJson("Credentials", "https://user:pass@example.test", "/credentials", null, "PUBLIC"),
+                serviceJson("Fragment", "https://example.test/path#fragment", "/fragment", null, "PUBLIC"),
+                serviceJson("Path", "https://example.test", "relative", null, "PUBLIC"),
+                serviceJson("Target Path", "https://example.test", "/target", "//other/path", "PUBLIC"),
+                serviceJson("Bad Mode", "https://example.test", "/bad-mode", null, "BASIC")
+        };
+
+        for (String payload : invalidPayloads) {
+            mockMvc.perform(put("/api/v1/services/" + service.getId())
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(payload))
+                    .andExpect(status().isBadRequest());
+        }
+        assertEquals("Valid", registeredServiceRepository.findById(service.getId()).orElseThrow().getName());
+    }
+
+    @Test
+    void serviceUpdateAndStatusRequireAdminAuthenticationAndOrganizationOwnership() throws Exception {
+        OrganizationRegistrationResponse owner = register("protected-update-org", "protected-update@example.com");
+        OrganizationRegistrationResponse other = register("foreign-update-org", "foreign-update@example.com");
+        var member = organizationRegistrationService.addUserForAdmin(
+                owner.admin().id(),
+                new AddUserRequest("Member", "update-member@example.com", TEST_PASSWORD));
+        RegisteredService ownedService = registerService(owner, "Owned");
+        RegisteredService foreignService = registerService(other, "Foreign");
+        UUID missingServiceId = UUID.randomUUID();
+
+        mockMvc.perform(put("/api/v1/services/" + ownedService.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson("No Auth", "https://example.test", "/no-auth", null, "PUBLIC")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(patch("/api/v1/services/" + ownedService.getId() + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isUnauthorized());
+
+        String memberToken = jwt(member.id(), owner.id());
+        mockMvc.perform(put("/api/v1/services/" + ownedService.getId())
+                        .header("Authorization", "Bearer " + memberToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson("No Permission", "https://example.test", "/no-permission", null, "PUBLIC")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/v1/services/" + ownedService.getId() + "/status")
+                        .header("Authorization", "Bearer " + memberToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isForbidden());
+
+        String adminToken = jwt(owner.admin().id(), owner.id());
+        mockMvc.perform(put("/api/v1/services/" + foreignService.getId())
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson("Foreign Update", "https://example.test", "/foreign-update", null, "PUBLIC")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(patch("/api/v1/services/" + foreignService.getId() + "/status")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/api/v1/services/" + missingServiceId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson("Missing", "https://example.test", "/missing", null, "PUBLIC")))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(patch("/api/v1/services/" + missingServiceId + "/status")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void adminCanDeactivateAndReactivateServiceAndStatusRequestMustBeExplicit() throws Exception {
+        OrganizationRegistrationResponse owner = register("service-status-org", "service-status@example.com");
+        RegisteredService service = registerService(owner, "Status Service");
+        Instant createdUpdatedAt = registeredServiceRepository.findById(service.getId())
+                .orElseThrow().getUpdatedAt();
+        String url = "/api/v1/services/" + service.getId() + "/status";
+        String accessToken = jwt(owner.admin().id(), owner.id());
+
+        mockMvc.perform(patch(url)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch(url)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":null}"))
+                .andExpect(status().isBadRequest());
+
+        Thread.sleep(10);
+        mockMvc.perform(patch(url)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false));
+        RegisteredService deactivated = registeredServiceRepository.findById(service.getId()).orElseThrow();
+        Instant deactivatedAt = deactivated.getUpdatedAt();
+        assertTrue(deactivatedAt.isAfter(createdUpdatedAt));
+
+        Thread.sleep(10);
+        mockMvc.perform(patch(url)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(true));
+        RegisteredService reactivated = registeredServiceRepository.findById(service.getId()).orElseThrow();
+        assertTrue(reactivated.getUpdatedAt().isAfter(deactivatedAt));
+        assertEquals(1, registeredServiceRepository.count());
     }
 
     private OrganizationRegistrationResponse register(String slug, String email) {
