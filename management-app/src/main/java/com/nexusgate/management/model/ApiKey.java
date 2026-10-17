@@ -1,8 +1,9 @@
 package com.nexusgate.management.model;
 
-import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -48,7 +49,11 @@ public class ApiKey {
     @Column(name = "revoked_at")
     private Instant revokedAt;
 
-    @OneToMany(mappedBy = "apiKey", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private ApiKeyStatus status = ApiKeyStatus.ACTIVE;
+
+    @OneToMany(mappedBy = "apiKey")
     private List<ApiKeyPermission> permissions = new ArrayList<>();
 
     protected ApiKey() {
@@ -81,13 +86,30 @@ public class ApiKey {
     }
 
     public void revoke() {
-        if (revokedAt == null) {
+        if (status != ApiKeyStatus.REVOKED) {
+            status = ApiKeyStatus.REVOKED;
             revokedAt = Instant.now();
         }
     }
 
-    public boolean isRevoked() {
-        return revokedAt != null;
+    public void setInactive() {
+        if (status != ApiKeyStatus.REVOKED) {
+            status = ApiKeyStatus.INACTIVE;
+        }
+    }
+
+    public void setActive(boolean active, Instant now) {
+        if (status == ApiKeyStatus.REVOKED) {
+            throw new IllegalStateException("A revoked API key cannot be reactivated");
+        }
+        if (active && expiresAt != null && !expiresAt.isAfter(now)) {
+            throw new IllegalStateException("An expired API key cannot be reactivated");
+        }
+        status = active ? ApiKeyStatus.ACTIVE : ApiKeyStatus.INACTIVE;
+    }
+
+    public boolean isUsableAt(Instant now) {
+        return status == ApiKeyStatus.ACTIVE && (expiresAt == null || expiresAt.isAfter(now));
     }
 
     public UUID getId() {
@@ -120,6 +142,10 @@ public class ApiKey {
 
     public Instant getRevokedAt() {
         return revokedAt;
+    }
+
+    public ApiKeyStatus getStatus() {
+        return status;
     }
 
     public List<ApiKeyPermission> getPermissions() {

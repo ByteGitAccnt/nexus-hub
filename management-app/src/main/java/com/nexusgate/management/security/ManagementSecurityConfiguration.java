@@ -15,43 +15,46 @@ import javax.crypto.SecretKey;
 @Configuration
 public class ManagementSecurityConfiguration {
 
-    @Bean
-    SecurityFilterChain managementSecurityFilterChain(
-            HttpSecurity http,
-            JwtProperties jwtProperties,
-            SecretKey jwtSigningKey,
-            JwtPrincipalLoader principalLoader
-    ) throws Exception {
-        return http
-                .csrf(csrf -> csrf.disable())
-                .formLogin(form -> form.disable())
-                .httpBasic(basic -> basic.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .exceptionHandling(exceptions -> exceptions
-                        .authenticationEntryPoint((request, response, exception) ->
-                                response.setStatus(401))
-                        .accessDeniedHandler((request, response, exception) ->
-                                response.setStatus(403))
-                )
-                .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers(
-                                "/api/v1/organizations/register",
-                                "/api/v1/auth/login",
-                                "/api/v1/auth/refresh"
-                        ).permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/users/*/status").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/services").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/services/*").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/status").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/services", "/api/v1/services/*")
-                        .hasAnyRole("ADMIN", "MEMBER")
-                        .anyRequest().authenticated()
-                )
-                .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtProperties, jwtSigningKey, principalLoader),
-                        UsernamePasswordAuthenticationFilter.class
-                )
-                .build();
-    }
+        @Bean
+        SecurityFilterChain managementSecurityFilterChain(
+                        HttpSecurity http,
+                        JwtProperties jwtProperties,
+                        SecretKey jwtSigningKey,
+                        JwtPrincipalLoader principalLoader) throws Exception {
+                return http
+                                .csrf(csrf -> csrf.disable())
+                                .formLogin(form -> form.disable())
+                                .httpBasic(basic -> basic.disable())
+                                .sessionManagement(session -> session
+                                                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                                .exceptionHandling(exceptions -> exceptions
+                                                .authenticationEntryPoint((request, response, exception) -> response
+                                                                .setStatus(401))
+                                                .accessDeniedHandler((request, response, exception) -> response
+                                                                .setStatus(403)))
+                                .authorizeHttpRequests(authorize -> authorize
+                                                .requestMatchers(
+                                                                "/api/v1/organizations/register",
+                                                                "/api/v1/auth/login",
+                                                                "/api/v1/auth/refresh")
+                                                .permitAll()
+                                                .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/v1/users/*/status")
+                                                .hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.POST, "/api/v1/services").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/v1/services/*").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/status")
+                                                .hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.GET, "/api/v1/services",
+                                                                "/api/v1/services/*")
+                                                .hasAnyRole("ADMIN", "MEMBER")
+                                                .requestMatchers("/api/v1/api-keys", "/api/v1/api-keys/**")
+                                                .hasRole("ADMIN")
+                                                .anyRequest().authenticated())
+                                .addFilterBefore(
+                                                new JwtAuthenticationFilter(jwtProperties, jwtSigningKey,
+                                                                principalLoader),
+                                                UsernamePasswordAuthenticationFilter.class)
+                                .build();
+        }
 }
