@@ -30,8 +30,8 @@ security:
     audience: nexushub
 
 rateLimit:
-  enabled: false
-  redisFailureStrategy: fail-closed
+  enabled: true
+  redisFailureStrategy: fail-open
   redisTimeoutMs: 1000
 
   outer:
@@ -42,7 +42,7 @@ rateLimit:
     refillPeriodSeconds: 60
 
   inner:
-    enabled: true
+    enabled: false
     algorithm: token-bucket
     capacity: 60
     refillRate: 60
