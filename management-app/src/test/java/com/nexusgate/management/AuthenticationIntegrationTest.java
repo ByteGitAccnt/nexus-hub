@@ -54,6 +54,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -267,6 +268,64 @@ class AuthenticationIntegrationTest {
                 assertEquals(registered.id(), created.getOrganization().getId());
                 assertEquals(UserRole.MEMBER, created.getRole());
                 assertTrue(passwordEncoder.matches("A-strong-password-123", created.getPasswordHash()));
+        }
+
+        @Test
+        void adminCanListOnlyUsersInTheirOrganizationWithoutSensitiveFields() throws Exception {
+                OrganizationRegistrationResponse registered = register("list-users-org", "list-admin@example.com");
+                Organization organization = organizationRepository.findById(registered.id()).orElseThrow();
+                User member = userRepository.saveAndFlush(new User(
+                                organization,
+                                "Listed Member",
+                                "listed-member@example.com",
+                                passwordEncoder.encode(TEST_PASSWORD),
+                                UserRole.MEMBER));
+                register("other-list-users-org", "other-list-admin@example.com");
+                String adminToken = jwt(
+                                registered.admin().id(),
+                                registered.id(),
+                                Instant.now().plusSeconds(300),
+                                TEST_SECRET);
+
+                String responseBody = mockMvc.perform(get("/api/v1/users")
+                                .header("Authorization", "Bearer " + adminToken))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.length()").value(2))
+                                .andExpect(jsonPath("$[?(@.email == 'list-admin@example.com')]").exists())
+                                .andExpect(jsonPath("$[?(@.email == 'listed-member@example.com')]").exists())
+                                .andExpect(jsonPath("$[?(@.email == 'other-list-admin@example.com')]").doesNotExist())
+                                .andExpect(jsonPath("$[0].password").doesNotExist())
+                                .andExpect(jsonPath("$[0].passwordHash").doesNotExist())
+                                .andReturn().getResponse().getContentAsString();
+
+                assertFalse(responseBody.contains(userRepository.findById(member.getId()).orElseThrow()
+                                .getPasswordHash()));
+                assertFalse(responseBody.contains(userRepository.findById(registered.admin().id()).orElseThrow()
+                                .getPasswordHash()));
+                assertEquals(registered.id(), userRepository.findById(member.getId()).orElseThrow()
+                                .getOrganization().getId());
+        }
+
+        @Test
+        void listingUsersRequiresAnAuthenticatedAdmin() throws Exception {
+                OrganizationRegistrationResponse registered = register("list-auth-org", "list-auth-admin@example.com");
+                Organization organization = organizationRepository.findById(registered.id()).orElseThrow();
+                User member = userRepository.saveAndFlush(new User(
+                                organization,
+                                "List Member",
+                                "list-auth-member@example.com",
+                                passwordEncoder.encode(TEST_PASSWORD),
+                                UserRole.MEMBER));
+
+                mockMvc.perform(get("/api/v1/users"))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(get("/api/v1/users")
+                                .header("Authorization", "Bearer " + jwt(
+                                                member.getId(),
+                                                registered.id(),
+                                                Instant.now().plusSeconds(300),
+                                                TEST_SECRET)))
+                                .andExpect(status().isForbidden());
         }
 
         @Test
