@@ -39,6 +39,8 @@ public class ManagementSecurityConfiguration {
                                                                 "/swagger-ui.html",
                                                                 "/swagger-ui/**")
                                                 .permitAll()
+                                                .requestMatchers(HttpMethod.GET, "/actuator/health")
+                                                .permitAll()
                                                 .requestMatchers(
                                                                 "/api/v1/organizations/register",
                                                                 "/api/v1/auth/login",
