@@ -20,3 +20,6 @@ public class ManagementApplication {
 // POST /api/v1/api-keys/{keyId}/revoke permanently revokes.
 // All require an active persisted ADMIN and organization. Cross-tenant or
 // missing keys return 404.
+
+// code0/c-users-vazha-copilot-session-state-c1b4b9b4-ab37-4e2e-46afe -
+// readme.md updated
