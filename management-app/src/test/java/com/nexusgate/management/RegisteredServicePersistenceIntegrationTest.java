@@ -123,6 +123,21 @@ class RegisteredServicePersistenceIntegrationTest {
     }
 
     @Test
+    void enforcesReservedNexusHubBasePathConstraint() {
+        Organization organization = organizationRepository.saveAndFlush(
+                new Organization("Reserved Path Owner", "reserved-path-owner"));
+
+        for (String basePath : new String[]{"/nexushub", "/NexusHub/api"}) {
+            assertThrows(DataIntegrityViolationException.class, () -> jdbcTemplate.update("""
+                    INSERT INTO registered_services
+                        (id, organization_id, name, target_url, base_path, auth_mode)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, UUID.randomUUID(), organization.getId(), "Reserved",
+                    "https://example.test", basePath, "PUBLIC"));
+        }
+    }
+
+    @Test
     void allowsNullableTargetPathAndDatabaseActiveDefault() {
         Organization organization = organizationRepository.saveAndFlush(
                 new Organization("Default Owner", "default-service-owner"));

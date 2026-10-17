@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Size;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Locale;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CreateServiceRequest(
@@ -59,5 +60,15 @@ public record CreateServiceRequest(
                 && !targetPath.startsWith("//")
                 && targetPath.indexOf('?') < 0
                 && targetPath.indexOf('#') < 0);
+    }
+
+    @AssertTrue(message = "must not use the reserved /nexushub path prefix")
+    public boolean isBasePathNotReserved() {
+        if (basePath == null) {
+            return true;
+        }
+        String normalizedBasePath = basePath.trim().toLowerCase(Locale.ROOT);
+        return !normalizedBasePath.equals("/nexushub")
+                && !normalizedBasePath.startsWith("/nexushub/");
     }
 }
