@@ -19,6 +19,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 
 import java.util.List;
+import java.util.Locale;
 
 @Component
 @ConditionalOnProperty(
@@ -54,46 +55,47 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
 
             boolean isPublic = publicEndpoints.stream()
                     .anyMatch(relativePath::equals);
+            String authMode = config.getAuthMode() == null
+                    ? "JWT"
+                    : config.getAuthMode().toUpperCase(Locale.ROOT);
+            if (!List.of("JWT", "API_KEY", "PUBLIC").contains(authMode)) {
+                return reject(exchange, "unsupported_auth_mode");
+            }
 
             String authHeader = exchange.getRequest()
                     .getHeaders()
                     .getFirst("Authorization");
+            String apiKeyHeader = exchange.getRequest()
+                    .getHeaders()
+                    .getFirst("X-API-Key");
 
-            //skips the auth verification
             if (isPublic && authHeader == null) {
                 return chain.filter(exchange);
             }
 
-            if ( authHeader == null || !authHeader.startsWith("Bearer ")) {
-                if(nexusConfig.getMonitoring().isEnabled()) {
-                    meterRegistry.counter(
-                            "nexusgate.auth.failures" ,
-                            "reason" ,"missing_or_invalid_header"
-                            ).increment();
+            if (authHeader == null) {
+                if ("PUBLIC".equals(authMode) && (apiKeyHeader == null || apiKeyHeader.isBlank())) {
+                    return chain.filter(exchange);
                 }
-                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-                return exchange.getResponse().setComplete();
+                if ("API_KEY".equals(authMode) && apiKeyHeader != null && !apiKeyHeader.isBlank()) {
+                    return chain.filter(exchange);
+                }
+                return reject(exchange, "missing_or_unsupported_credentials");
+            }
+
+            if (!authHeader.startsWith("Bearer ") || authHeader.length() == 7) {
+                return reject(exchange, "missing_or_invalid_header");
             }
 
             String jwtToken = authHeader.substring(7);
             try {
-
-
                 Claims claims = tokenVerifier.verify(jwtToken);
                 // Resolve the configured identity claim
                 String identityClaim = config.getIdentityClaim();
 
                 Object identity = claims.get(identityClaim);
                 if (identity == null) {
-                    if (nexusConfig.getMonitoring().isEnabled()) {
-                        meterRegistry.counter(
-                                "nexusgate.auth.failures",
-                                "reason" , "identity_missing"
-                        ).increment();
-                    }
-                    exchange.getResponse()
-                            .setStatusCode(HttpStatus.UNAUTHORIZED);
-                    return exchange.getResponse().setComplete();
+                    return reject(exchange, "identity_missing");
                 }
                 // Authentication will be established here.
                 Authentication authentication =
@@ -116,19 +118,22 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
                                 )
                         );
             } catch (JwtException | IllegalArgumentException e) {
-                if (nexusConfig.getMonitoring().isEnabled()) {
-                    meterRegistry.counter(
-                            "nexusgate.auth.failures",
-                            "reason" , "invalid_token"
-                    ).increment();
-                }
-                exchange.getResponse()
-                        .setStatusCode(HttpStatus.UNAUTHORIZED);
-                return exchange.getResponse().setComplete();
+                return reject(exchange, "invalid_token");
             }
         };
         //default order is -100, so we set it to -90 to ensure it runs after the default filters
         return new OrderedGatewayFilter(filter, -90);
+    }
+
+    private reactor.core.publisher.Mono<Void> reject(
+            org.springframework.web.server.ServerWebExchange exchange,
+            String reason
+    ) {
+        if (nexusConfig.getMonitoring().isEnabled()) {
+            meterRegistry.counter("nexusgate.auth.failures", "reason", reason).increment();
+        }
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        return exchange.getResponse().setComplete();
     }
 
     @Getter
@@ -137,5 +142,6 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
         private List<String> publicEndpoints;
         private String servicePath;
         private String identityClaim;
+        private String authMode;
     }
 }

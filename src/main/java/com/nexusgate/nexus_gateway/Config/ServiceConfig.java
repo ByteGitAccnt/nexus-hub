@@ -10,6 +10,7 @@ public class ServiceConfig {
 
     private String url;
     private String path;
+    private ServiceAuthMode authMode;
     private List<String>  publicEndpoints;
     private ManagementServiceConfig management;
 

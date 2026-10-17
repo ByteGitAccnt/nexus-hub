@@ -59,6 +59,20 @@ routes matching requests to the Product Service.
 
 NexusGate acts as the single entry point while the business logic remains in the downstream service.
 
+### `authMode`
+
+Selects the service's authentication policy when `security.enabled` is `true`:
+
+```yaml
+services:
+  orders:
+    url: http://localhost:8082
+    path: /api/v1/order/**
+    authMode: JWT
+```
+
+Supported values are `JWT`, `API_KEY`, and `PUBLIC`. If omitted, the Gateway uses `JWT` to preserve the behavior of existing service entries. `JWT` requires a valid Bearer token except on configured public endpoints. `PUBLIC` allows requests without credentials, but validates a supplied Bearer token and rejects unsupported credentials. `API_KEY` accepts a valid Bearer token through the existing JWT verifier or delegates an `X-API-Key` request to the API-key authentication filter. That filter currently fails closed with `401` until API-key verification is implemented; merely supplying the header never authorizes a request.
+
 ### `publicEndpoints`
 
 Defines endpoints that do not require JWT authentication at the gateway.
@@ -71,6 +85,8 @@ publicEndpoints:
 ```
 
 A public endpoint may be accessed without a token. If a client includes a Bearer token on a public endpoint, NexusGate still validates it. Invalid or malformed tokens are rejected rather than ignored.
+
+Public endpoint values are relative to the configured service path. For example, with `path: /nexushub/**`, `/api/v1/auth/login` matches the incoming path `/nexushub/api/v1/auth/login`.
 
 ## 2. Management endpoint configuration
 
