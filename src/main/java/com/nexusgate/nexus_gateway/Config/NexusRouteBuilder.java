@@ -33,7 +33,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             ServiceConfig service = entry.getValue();
             // JWT authentication filter
             FilterDefinition jwtFilter = null;
-            if(config.getSecurity().isEnabled()){
+            if (config.getSecurity().isEnabled()) {
                 jwtFilter = new FilterDefinition();
                 jwtFilter.setName("JwtAuthentication");// part of naming convention
 
@@ -46,6 +46,9 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                     args.put("publicEndpoints", String.join(",", publicEndpoints));
                 }
                 args.put("servicePath", String.join(",", service.getPath().replace("/**", "")));
+                args.put("authMode", (service.getAuthMode() == null
+                        ? ServiceAuthMode.JWT
+                        : service.getAuthMode()).name());
                 // feeding the identity claim to the jwt filter
                 String identityClaim = config.getSecurity()
                         .getJwt()
@@ -57,9 +60,21 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
                 jwtFilter.setArgs(args);
             }
-            //inner rate limiter filter
+            FilterDefinition apiKeyFilter = null;
+            if (config.getSecurity().isEnabled() && service.getAuthMode() == ServiceAuthMode.API_KEY) {
+                apiKeyFilter = new FilterDefinition();
+                apiKeyFilter.setName("ApiKeyAuthentication");
+                Map<String, String> args = new HashMap<>();
+                List<String> publicEndpoints = service.getPublicEndpoints();
+                if (publicEndpoints != null && !publicEndpoints.isEmpty()) {
+                    args.put("publicEndpoints", String.join(",", publicEndpoints));
+                }
+                args.put("servicePath", service.getPath().replace("/**", ""));
+                apiKeyFilter.setArgs(args);
+            }
+            // inner rate limiter filter
             FilterDefinition innerLimiter = null;
-            if(config.getRateLimit().isEnabled()){
+            if (config.getRateLimit().isEnabled()) {
                 innerLimiter = new FilterDefinition();
                 innerLimiter.setName("InnerRateLimit");
             }
@@ -75,11 +90,15 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             apiPredicate.addArg("pattern", service.getPath());
 
             apiRoute.setPredicates(List.of(apiPredicate));
-            //JWT authentication and inner rate limiter filter adding to the route
+            // JWT authentication and inner rate limiter filter adding to the route
             List<FilterDefinition> filters = new ArrayList<>();
 
             if (jwtFilter != null) {
                 filters.add(jwtFilter);
+            }
+
+            if (apiKeyFilter != null) {
+                filters.add(apiKeyFilter);
             }
 
             if (innerLimiter != null) {
@@ -93,7 +112,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             }
             apiRoute.setFilters(filters);
             routes.add(apiRoute);
-            //System.out.println("FILTERS: " + apiRoute.getFilters());
+            // System.out.println("FILTERS: " + apiRoute.getFilters());
             // Management route
             if (config.getManagement() != null && config.getManagement().isEnabled()) {
 
@@ -101,13 +120,11 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
                 if (!endpoints.isEmpty()) {
 
-                    RouteDefinition managementRoute =
-                            createManagementRoute(
-                                    config,
-                                    serviceName,
-                                    service,
-                                    endpoints
-                            );
+                    RouteDefinition managementRoute = createManagementRoute(
+                            config,
+                            serviceName,
+                            service,
+                            endpoints);
 
                     routes.add(managementRoute);
                 }
@@ -130,8 +147,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             NexusConfig config,
             String serviceName,
             ServiceConfig service,
-            List<String> endpoints
-    ) {
+            List<String> endpoints) {
 
         ManagementConfig management = config.getManagement();
 
@@ -155,8 +171,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                 management.getBasePath()
                         + "/"
                         + serviceName
-                        + "/**"
-        );
+                        + "/**");
         route.setPredicates(List.of(predicate));
         // -----------------------------------------
         // Custom management endpoint filter
@@ -168,7 +183,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
         // RewritePath
         //
         // /management/auth/health
-        //          ↓
+        // ↓
         // /actuator/health
         // -----------------------------------------
 
@@ -179,14 +194,12 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                 management.getBasePath()
                         + "/"
                         + serviceName
-                        + "/(?<endpoint>.*)"
-        );
+                        + "/(?<endpoint>.*)");
 
         rewrite.addArg(
                 "replacement",
                 management.getTargetPath()
-                        + "/${endpoint}"
-        );
+                        + "/${endpoint}");
 
         // Order matters:
         //
