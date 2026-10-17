@@ -30,3 +30,7 @@ public class ManagementApplication {
 
 // code0/c-users-vazha-code0-plans-nexus-management-health-actuator
 // actuator health exposed
+
+// code0/c-users-vazha-code0-plans-nexus-management-reserve-nexushub-
+// /nexushub cannot be owned by other services
+// throw validaion error if tried
