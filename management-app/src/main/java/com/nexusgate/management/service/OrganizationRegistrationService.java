@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -104,6 +105,30 @@ public class OrganizationRegistrationService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResourceConflictException("Email is already registered");
         }
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserResponse> listUsersForAdmin(UUID actorUserId) {
+        User actor = userRepository.findById(actorUserId)
+                .orElseThrow(() -> new AccessDeniedException("Active organization administrator required"));
+        Organization organization = actor.getOrganization();
+        if (actor.getRole() != UserRole.ADMIN
+                || actor.getStatus() != UserStatus.ACTIVE
+                || organization.getStatus() != OrganizationStatus.ACTIVE) {
+            throw new AccessDeniedException("Active organization administrator required");
+        }
+
+        return userRepository.findAllByOrganization_IdOrderByCreatedAtAsc(organization.getId())
+                .stream()
+                .map(user -> new UserResponse(
+                        user.getId(),
+                        organization.getId(),
+                        user.getName(),
+                        user.getEmail(),
+                        user.getRole(),
+                        user.getStatus(),
+                        user.getCreatedAt()))
+                .toList();
     }
 
     @Transactional
