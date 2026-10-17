@@ -180,6 +180,18 @@ class AuthenticationIntegrationTest {
         }
 
         @Test
+        void actuatorHealthIsPublicAndOtherActuatorEndpointsAreNotExposed() throws Exception {
+                mockMvc.perform(get("/actuator/health"))
+                                .andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("UP"));
+
+                mockMvc.perform(get("/actuator"))
+                                .andExpect(status().isUnauthorized());
+                mockMvc.perform(get("/actuator/metrics"))
+                                .andExpect(status().isUnauthorized());
+        }
+
+        @Test
         void logsInWithSignedGatewayCompatibleJwtAndHashedRefreshToken() throws Exception {
                 OrganizationRegistrationResponse registered = register("login-org", "admin@example.com");
                 Instant beforeLogin = Instant.now();

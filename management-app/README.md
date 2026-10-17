@@ -32,7 +32,7 @@ Versions below come from the Gradle build files and wrapper configuration:
 | Password hashing | BCrypt via `BCryptPasswordEncoder`                                                                        |
 | Tests            | Spring Boot test support, JUnit Platform, Spring MVC test, Testcontainers PostgreSQL/JUnit Jupiter 1.21.4 |
 
-The Management App listens on **8090** by default. The root Compose file defines PostgreSQL 17, publishing container port 5432 on host `127.0.0.1:5433`. The Gateway defaults to port **8080**. Compose currently defines only PostgreSQL; it does not start the Gateway, Redis, or downstream services.
+The Management App listens on **8090** by default. Its public health check is `GET /actuator/health`; only the health Actuator endpoint is exposed. The root Compose file defines PostgreSQL 17, publishing container port 5432 on host `127.0.0.1:5433`. The Gateway defaults to port **8080**. Compose currently defines only PostgreSQL; it does not start the Gateway, Redis, or downstream services.
 
 The Gateway build also uses Java 21 and Spring Boot 4.1.0 and imports Spring Cloud BOM 2025.1.2. The management module does not import a Spring Cloud BOM because it does not use Spring Cloud.
 
@@ -664,6 +664,8 @@ The Management App provides interactive Swagger UI and an OpenAPI 3 JSON specifi
 - OpenAPI JSON: <http://localhost:8090/v3/api-docs>
 
 Start the Management App using the [local setup instructions](#local-setup-and-run); PostgreSQL and the required `JWT_SECRET` must be configured. Swagger UI's **Authorize** button accepts an access JWT; paste the token itself (without `Bearer `), and Swagger sends it as `Authorization: Bearer <accessToken>`. Organization registration, login, and refresh are public. Logout and management endpoints require a bearer JWT; user and API-key management and service writes require ADMIN, while service reads permit ADMIN or MEMBER. The generated specification covers the Management App only and does not indicate that the Gateway consumes its service records, keys, or authorization rules. DTO constraints drive generated schemas, but examples and error details may be less exhaustive than this README.
+
+The Actuator health endpoint is available at <http://localhost:8090/actuator/health> without a JWT, for local health checks. Other Actuator endpoints are not exposed.
 
 ## Security and tenant isolation
 
