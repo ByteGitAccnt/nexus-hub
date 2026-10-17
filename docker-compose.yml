@@ -17,8 +17,26 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  redis:
+    image: redis:7-alpine
+    container_name: nexusgate-redis
+    restart: unless-stopped
+    command: [ "redis-server", "--appendonly", "yes" ]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - nexusgate_redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
 volumes:
   nexusgate_postgres_data:
     external: true
     name: nexusgate_postgres_data
+  nexusgate_redis_data:
+    name: nexusgate_redis_data
+
