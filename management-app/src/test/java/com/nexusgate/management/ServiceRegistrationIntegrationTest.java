@@ -173,6 +173,34 @@ class ServiceRegistrationIntegrationTest {
     }
 
     @Test
+    void rejectsReservedNexusHubBasePathOnCreationButAllowsNeighboringPrefix() throws Exception {
+        OrganizationRegistrationResponse owner = register("reserved-path-org", "reserved-path@example.com");
+        String accessToken = jwt(owner.admin().id(), owner.id());
+
+        for (String basePath : new String[]{"/nexushub", "/nexushub/", "/NexusHub/api"}) {
+            mockMvc.perform(post("/api/v1/services")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(serviceJson("Reserved", "https://example.test", basePath, null, "PUBLIC")))
+                    .andExpect(status().isBadRequest());
+        }
+
+        mockMvc.perform(post("/api/v1/services")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(serviceJson(
+                                "Neighboring",
+                                "https://example.test",
+                                "/nexushub-orders",
+                                null,
+                                "PUBLIC")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.basePath").value("/nexushub-orders"));
+
+        assertEquals(1, registeredServiceRepository.count());
+    }
+
+    @Test
     void requiresAdminAuthenticationAndRejectsMissingIdentity() throws Exception {
         OrganizationRegistrationResponse owner = register("secured-service-org", "secured@example.com");
         var member = organizationRegistrationService.addUserForAdmin(
@@ -287,7 +315,9 @@ class ServiceRegistrationIntegrationTest {
                 serviceJson("Fragment", "https://example.test/path#fragment", "/fragment", null, "PUBLIC"),
                 serviceJson("Path", "https://example.test", "relative", null, "PUBLIC"),
                 serviceJson("Target Path", "https://example.test", "/target", "//other/path", "PUBLIC"),
-                serviceJson("Bad Mode", "https://example.test", "/bad-mode", null, "BASIC")
+                serviceJson("Bad Mode", "https://example.test", "/bad-mode", null, "BASIC"),
+                serviceJson("Reserved Exact", "https://example.test", "/nexushub", null, "PUBLIC"),
+                serviceJson("Reserved Descendant", "https://example.test", "/NexusHub/api", null, "PUBLIC")
         };
 
         for (String payload : invalidPayloads) {

@@ -26,4 +26,11 @@ public class ManagementApplication {
 
 // code0/c-users-vazha-code0-plans-nexus-hub-management-openapi -
 // sswagger and open api configured , links to reach are in readme.md of
-// amangment app
+// amangment ap
+
+// code0/c-users-vazha-code0-plans-nexus-management-health-actuator
+// actuator health exposed
+
+// code0/c-users-vazha-code0-plans-nexus-management-reserve-nexushub-
+// /nexushub cannot be owned by other services
+// throw validaion error if tried

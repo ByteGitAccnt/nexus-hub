@@ -117,7 +117,8 @@ management-app/
     │           ├── V1__create_management_schema.sql
     │           ├── V2__add_user_name.sql
     │           ├── V3__create_registered_services.sql
-    │           └── V4__api_key_lifecycle_and_service_permissions.sql
+    │           ├── V4__api_key_lifecycle_and_service_permissions.sql
+    │           └── V5__reserve_nexushub_service_path.sql
     └── test/java/com/nexusgate/management/
         ├── ApiKeyManagementIntegrationTest.java
         ├── AuthenticationIntegrationTest.java
@@ -147,8 +148,8 @@ All five management test classes use PostgreSQL Testcontainers and Spring integr
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `OrganizationRegistrationIntegrationTest`     | Organization/initial ADMIN creation, normalized uniqueness conflicts, invalid registration input, ignoring forged role/tenant fields, transaction rollback, member creation/password hashing, and persisted ADMIN checks                                           |
 | `AuthenticationIntegrationTest`               | Login/JWT claims and refresh-token hashing, uniform bad-credential responses, identity sourced from persisted data, user listing/creation/status authorization and tenant isolation, refresh rotation/expiry/concurrency, and logout revocation                    |
-| `RegisteredServicePersistenceIntegrationTest` | Entity/schema persistence, organization-scoped name uniqueness, foreign-key/auth-mode constraints, nullable target path, and database active default                                                                                                               |
-| `ServiceRegistrationIntegrationTest`          | Service creation/read/update/status endpoints, validation and duplicate handling, ADMIN/MEMBER access, empty lists, tenant isolation, URL syntax checks, and update timestamps                                                                                     |
+| `RegisteredServicePersistenceIntegrationTest` | Entity/schema persistence, organization-scoped name uniqueness, foreign-key/auth-mode/reserved-path constraints, nullable target path, and database active default |
+| `ServiceRegistrationIntegrationTest`          | Service creation/read/update/status endpoints, validation and duplicate handling, ADMIN/MEMBER access, empty lists, tenant isolation, URL syntax checks, reserved-path rejection, and update timestamps |
 | `ApiKeyManagementIntegrationTest`             | Key generation/hash/prefix and one-time secret response, service eligibility and tenant checks, role/auth restrictions, list/detail secrecy, activation/expiry/revocation transitions, legacy migration data preservation, constraints, and transactional rollback |
 
 The tests start isolated PostgreSQL containers; Docker (or a compatible Testcontainers runtime) must be available. They do not require the developer's Compose database.
@@ -184,6 +185,8 @@ Refresh locks and validates the old token, checks current user/organization stat
 ### Services and API-key permissions
 
 `ServiceRegistrationService` persists service configuration under the administrator's persisted organization. `targetUrl` is checked for absolute HTTP(S) URI syntax, a host, and absence of user-info/fragment; no DNS resolution or outbound request is made. The `PUBLIC`, `JWT`, and `API_KEY` values are stored metadata; they do not currently alter Gateway behavior.
+
+The `/nexushub` path prefix is reserved for the Gateway's static Management App route. Service creation and updates reject `/nexushub` and paths beneath it, case-insensitively; a distinct prefix such as `/nexushub-orders` remains valid. Flyway V5 also enforces this rule in PostgreSQL, so direct database writes cannot claim the reserved route. Existing rows that conflict with the constraint must be reviewed before applying V5; the migration does not rewrite service paths.
 
 `ApiKeyManagementService` requires at least one requested service. Every service must exist in the admin's organization, be active, and have `auth_mode = API_KEY`. It generates a 32-byte random secret with an `ng_live_` prefix, stores its SHA-256 hash and a separate non-authenticating lookup prefix, and returns the full secret only in the creation response. The `INVOKE` permission links the API key and registered service by UUID. Database composite foreign keys reinforce that both records belong to the same organization. Those permissions are management data only until Gateway integration implements verification.
 
