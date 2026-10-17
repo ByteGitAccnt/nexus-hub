@@ -1,5 +1,7 @@
 package com.nexusgate.management;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexusgate.management.dto.LoginRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationRequest;
 import com.nexusgate.management.dto.OrganizationRegistrationResponse;
@@ -82,6 +84,8 @@ class AuthenticationIntegrationTest {
         @Autowired
         private MockMvc mockMvc;
 
+        private final ObjectMapper objectMapper = new ObjectMapper();
+
         @Autowired
         private OrganizationRepository organizationRepository;
 
@@ -106,6 +110,73 @@ class AuthenticationIntegrationTest {
                 refreshTokenRepository.deleteAll();
                 userRepository.deleteAll();
                 organizationRepository.deleteAll();
+        }
+
+        @Test
+        void swaggerDocumentationIsPublicAndDescribesTheManagementApiSecurity() throws Exception {
+                mockMvc.perform(get("/swagger-ui/index.html"))
+                                .andExpect(status().isOk());
+
+                String openApiJson = mockMvc.perform(get("/v3/api-docs"))
+                                .andExpect(status().isOk())
+                                .andReturn()
+                                .getResponse()
+                                .getContentAsString();
+                JsonNode document = objectMapper.readTree(openApiJson);
+
+                assertEquals("Nexus Hub Management API", document.path("info").path("title").asText());
+                assertEquals("v1", document.path("info").path("version").asText());
+                assertEquals("http", document.path("components").path("securitySchemes")
+                                .path("bearerAuth").path("type").asText());
+                assertEquals("bearer", document.path("components").path("securitySchemes")
+                                .path("bearerAuth").path("scheme").asText());
+                assertEquals("JWT", document.path("components").path("securitySchemes")
+                                .path("bearerAuth").path("bearerFormat").asText());
+
+                JsonNode paths = document.path("paths");
+                assertTrue(paths.has("/api/v1/organizations/register"));
+                assertTrue(paths.has("/api/v1/auth/login"));
+                assertTrue(paths.has("/api/v1/auth/refresh"));
+                assertTrue(paths.has("/api/v1/auth/logout"));
+                assertTrue(paths.has("/api/v1/users"));
+                assertTrue(paths.has("/api/v1/users/{userId}/status"));
+                assertTrue(paths.has("/api/v1/services"));
+                assertTrue(paths.has("/api/v1/services/{serviceId}"));
+                assertTrue(paths.has("/api/v1/services/{serviceId}/status"));
+                assertTrue(paths.has("/api/v1/api-keys"));
+                assertTrue(paths.has("/api/v1/api-keys/{keyId}"));
+                assertTrue(paths.has("/api/v1/api-keys/{keyId}/status"));
+                assertTrue(paths.has("/api/v1/api-keys/{keyId}/revoke"));
+
+                assertTrue(paths.path("/api/v1/organizations/register").path("post")
+                                .path("responses").has("201"));
+                assertTrue(paths.path("/api/v1/auth/login").path("post")
+                                .path("responses").has("200"));
+                assertTrue(paths.path("/api/v1/auth/logout").path("post")
+                                .path("responses").has("204"));
+                assertTrue(paths.path("/api/v1/auth/login").path("post").path("security").isMissingNode());
+                assertTrue(paths.path("/api/v1/auth/refresh").path("post").path("security").isMissingNode());
+                assertTrue(paths.path("/api/v1/organizations/register").path("post")
+                                .path("security").isMissingNode());
+                assertTrue(paths.path("/api/v1/users").path("get").path("security")
+                                .get(0).has("bearerAuth"));
+                assertTrue(paths.path("/api/v1/auth/logout").path("post").path("security")
+                                .get(0).has("bearerAuth"));
+
+                assertFalse(openApiJson.contains("\"passwordHash\""));
+                assertFalse(openApiJson.contains("\"keyHash\""));
+                assertFalse(openApiJson.contains("\"tokenHash\""));
+                assertTrue(openApiJson.contains("Acme Systems"));
+                assertTrue(openApiJson.contains("Mobile App Key"));
+                assertTrue(openApiJson.contains("one-time-secret"));
+        }
+
+        @Test
+        void swaggerIsPublicButProtectedUserEndpointStillRequiresAuthentication() throws Exception {
+                mockMvc.perform(get("/v3/api-docs"))
+                                .andExpect(status().isOk());
+                mockMvc.perform(get("/api/v1/users"))
+                                .andExpect(status().isUnauthorized());
         }
 
         @Test

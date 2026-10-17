@@ -5,6 +5,11 @@ import com.nexusgate.management.dto.RegisteredServiceResponse;
 import com.nexusgate.management.dto.UpdateServiceStatusRequest;
 import com.nexusgate.management.security.AuthenticatedUserPrincipal;
 import com.nexusgate.management.service.ServiceRegistrationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,6 +28,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/services")
+@Tag(name = "Registered services", description = "Organization-scoped service configuration")
 public class ServiceController {
 
     private final ServiceRegistrationService serviceRegistrationService;
@@ -33,6 +39,18 @@ public class ServiceController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Register a service", description = "ADMIN only. Stores service configuration; target URL validation is syntax-only.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(
+                    examples = @ExampleObject(name = "API-key protected service", value = """
+                            {
+                              "name": "Orders",
+                              "targetUrl": "https://orders.example.com/api",
+                              "basePath": "/orders",
+                              "targetPath": "/api",
+                              "authMode": "API_KEY"
+                            }
+                            """))))
     public RegisteredServiceResponse register(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @Valid @RequestBody CreateServiceRequest request
@@ -41,6 +59,8 @@ public class ServiceController {
     }
 
     @GetMapping
+    @Operation(summary = "List services", description = "Lists services belonging to the authenticated user's organization. ADMIN and MEMBER.",
+            security = @SecurityRequirement(name = "bearerAuth"))
     public List<RegisteredServiceResponse> list(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal
     ) {
@@ -48,6 +68,8 @@ public class ServiceController {
     }
 
     @GetMapping("/{serviceId}")
+    @Operation(summary = "Get a service", description = "Gets a service in the authenticated user's organization. ADMIN and MEMBER.",
+            security = @SecurityRequirement(name = "bearerAuth"))
     public RegisteredServiceResponse get(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @PathVariable UUID serviceId
@@ -56,6 +78,8 @@ public class ServiceController {
     }
 
     @PutMapping("/{serviceId}")
+    @Operation(summary = "Replace service configuration", description = "ADMIN only. Replaces the service configuration; this is not a partial update.",
+            security = @SecurityRequirement(name = "bearerAuth"))
     public RegisteredServiceResponse update(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @PathVariable UUID serviceId,
@@ -65,6 +89,10 @@ public class ServiceController {
     }
 
     @PatchMapping("/{serviceId}/status")
+    @Operation(summary = "Change service status", description = "ADMIN only. Activates or deactivates a service without deleting it.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(
+                    examples = @ExampleObject(name = "Deactivate service", value = "{\"active\":false}"))))
     public RegisteredServiceResponse updateStatus(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @PathVariable UUID serviceId,
