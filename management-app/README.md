@@ -656,6 +656,15 @@ Success: `200 OK` with safe metadata; false results in `INACTIVE`, true in `ACTI
 
 Permanently revokes a key. No request body. Success: `200 OK` with safe metadata showing `status: "REVOKED"` and `revokedAt` populated. Repeated revocation is safe; no endpoint can reactivate a revoked key. Missing/cross-tenant IDs return 404.
 
+## Swagger UI and OpenAPI
+
+The Management App provides interactive Swagger UI and an OpenAPI 3 JSON specification for its current endpoints:
+
+- Swagger UI: <http://localhost:8090/swagger-ui/index.html>
+- OpenAPI JSON: <http://localhost:8090/v3/api-docs>
+
+Start the Management App using the [local setup instructions](#local-setup-and-run); PostgreSQL and the required `JWT_SECRET` must be configured. Swagger UI's **Authorize** button accepts an access JWT; paste the token itself (without `Bearer `), and Swagger sends it as `Authorization: Bearer <accessToken>`. Organization registration, login, and refresh are public. Logout and management endpoints require a bearer JWT; user and API-key management and service writes require ADMIN, while service reads permit ADMIN or MEMBER. The generated specification covers the Management App only and does not indicate that the Gateway consumes its service records, keys, or authorization rules. DTO constraints drive generated schemas, but examples and error details may be less exhaustive than this README.
+
 ## Security and tenant isolation
 
 - Public routes are organization registration, login, and refresh. Logout and all user, service, and API-key routes require authentication; roles are applied per route as described above.

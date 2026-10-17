@@ -34,6 +34,12 @@ public class ManagementSecurityConfiguration {
                                                                 .setStatus(403)))
                                 .authorizeHttpRequests(authorize -> authorize
                                                 .requestMatchers(
+                                                                "/v3/api-docs",
+                                                                "/v3/api-docs/**",
+                                                                "/swagger-ui.html",
+                                                                "/swagger-ui/**")
+                                                .permitAll()
+                                                .requestMatchers(
                                                                 "/api/v1/organizations/register",
                                                                 "/api/v1/auth/login",
                                                                 "/api/v1/auth/refresh")
