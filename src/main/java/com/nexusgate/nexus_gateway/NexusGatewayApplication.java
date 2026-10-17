@@ -11,3 +11,5 @@ public class NexusGatewayApplication {
 	}
 
 }
+// code0/c-users-vazha-code0-plans-nexus-gateway-nexushub-strip-prefi
+// gate way now connected to the managment -app

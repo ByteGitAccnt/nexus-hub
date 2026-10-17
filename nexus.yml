@@ -1,11 +1,11 @@
 services:
   nexus-hub:
     url: http://localhost:8090
-    path: /api/v1/auth/**
+    path: /nexushub/**
     publicEndpoints:
-      - /login
-      - /register
-      - /refresh
+      - /api/v1/organizations/register
+      - /api/v1/auth/login
+      - /api/v1/auth/refresh
 
 management:
   enabled: true
@@ -26,11 +26,11 @@ security:
       type: shared-secret
       secret: ${JWT_SECRET}
 
-    issuer: http://localhost:8081
-    audience: nexusgate
+    issuer: http://localhost:8090
+    audience: nexushub
 
 rateLimit:
-  enabled: true
+  enabled: false
   redisFailureStrategy: fail-closed
   redisTimeoutMs: 1000
 

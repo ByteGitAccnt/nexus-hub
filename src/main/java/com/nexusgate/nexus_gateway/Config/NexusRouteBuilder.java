@@ -85,6 +85,12 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             if (innerLimiter != null) {
                 filters.add(innerLimiter);
             }
+            if (service.getPath().equals("/nexushub/**")) {
+                FilterDefinition stripPrefix = new FilterDefinition();
+                stripPrefix.setName("StripPrefix");
+                stripPrefix.addArg("parts", "1");
+                filters.add(stripPrefix);
+            }
             apiRoute.setFilters(filters);
             routes.add(apiRoute);
             //System.out.println("FILTERS: " + apiRoute.getFilters());
