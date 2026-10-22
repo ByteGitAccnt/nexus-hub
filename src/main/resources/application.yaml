@@ -16,3 +16,7 @@ management:
 
 server:
   port: 8080
+
+nexushub:
+  internal:
+    shared-secret: ${NEXUSHUB_INTERNAL_SHARED_SECRET}

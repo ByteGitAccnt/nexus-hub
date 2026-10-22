@@ -1,5 +1,8 @@
 package com.nexusgate.nexus_gateway.Filter;
 
+import com.nexusgate.nexus_gateway.Config.NexusConfig;
+import com.nexusgate.nexus_gateway.Dto.ValidationRequest;
+import com.nexusgate.nexus_gateway.Dto.ValidationResult;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -8,6 +11,7 @@ import org.springframework.cloud.gateway.filter.OrderedGatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 
@@ -15,9 +19,11 @@ import java.util.List;
 @ConditionalOnProperty(name = "security.enabled", havingValue = "true")
 public class ApiKeyAuthenticationGatewayFilterFactory
         extends AbstractGatewayFilterFactory<ApiKeyAuthenticationGatewayFilterFactory.Config> {
+    private final NexusConfig nexusConfig;
 
-    public ApiKeyAuthenticationGatewayFilterFactory() {
+    public ApiKeyAuthenticationGatewayFilterFactory(NexusConfig nexusConfig) {
         super(Config.class);
+        this.nexusConfig = nexusConfig;
     }
 
     @Override
@@ -41,6 +47,14 @@ public class ApiKeyAuthenticationGatewayFilterFactory
             }
 
             if (exchange.getRequest().getHeaders().getFirst("X-API-Key") != null) {
+               /* String validationUrl = nexusConfig.getServices().get("nexus-hub").getUrl() + "/internal/api-keys/validate";
+                Mono<ValidationResult> result = webClient.post()
+                        .uri(validationUrl)
+                        .bodyValue(new ValidationRequest)
+                        .retrieve()
+                        .bodyToMono(ValidationResult.class);
+
+*/
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
             }

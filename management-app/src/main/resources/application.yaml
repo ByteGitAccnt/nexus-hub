@@ -29,3 +29,7 @@ management:
     audience: ${JWT_AUDIENCE:nexushub}
     access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:PT15M}
     refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:P30D}
+
+nexushub:
+  internal:
+    shared-secret: ${NEXUSHUB_INTERNAL_SHARED_SECRET}

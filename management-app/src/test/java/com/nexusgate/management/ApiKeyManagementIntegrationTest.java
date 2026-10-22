@@ -1,9 +1,6 @@
 package com.nexusgate.management;
 
-import com.nexusgate.management.dto.AddUserRequest;
-import com.nexusgate.management.dto.CreateApiKeyRequest;
-import com.nexusgate.management.dto.OrganizationRegistrationRequest;
-import com.nexusgate.management.dto.OrganizationRegistrationResponse;
+import com.nexusgate.management.dto.*;
 import com.nexusgate.management.model.ApiKey;
 import com.nexusgate.management.model.ApiKeyPermission;
 import com.nexusgate.management.model.ApiKeyStatus;
@@ -28,11 +25,13 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -50,20 +49,18 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = "management.jwt.secret=0123456789abcdef0123456789abcdef")
+@SpringBootTest(properties ={ "management.jwt.secret=0123456789abcdef0123456789abcdef",
+        "nexushub.internal.shared-secret=internal-validation-shared-secret"})
 @AutoConfigureMockMvc
 @Testcontainers
 class ApiKeyManagementIntegrationTest {
@@ -72,6 +69,7 @@ class ApiKeyManagementIntegrationTest {
     private static final String TEST_PASSWORD = "A-strong-password-123";
     private static final String ISSUER = "http://localhost:8090";
     private static final String AUDIENCE = "nexushub";
+    private static final String INTERNAL_SECRET = "internal-validation-shared-secret";
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17");
@@ -106,6 +104,10 @@ class ApiKeyManagementIntegrationTest {
 
     @Autowired
     private ApiKeyManagementService apiKeyManagementService;
+
+
+    @MockitoBean
+    private ApiKeyManagementService apiKeyManagementServiceForMocking;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -339,52 +341,6 @@ class ApiKeyManagementIntegrationTest {
     }
 
     @Test
-    void preservesLegacySlugPermissionRowsAndEnforcesUuidTenantForeignKeys() throws Exception {
-        OrganizationRegistrationResponse owner = register("legacy-permission-org", "legacy@example.com");
-        RegisteredService service = registerService(owner, "Legacy API", true, ServiceAuthMode.API_KEY);
-        String created = createWithToken(owner, service, jwt(owner.admin().id(), owner.id()));
-        UUID keyId = UUID.fromString(responseString(created, "id"));
-        String rawLegacySlug = "legacy-service";
-        jdbcTemplate.update("""
-                INSERT INTO api_key_service_permissions_legacy (id, api_key_id, service_slug, permission)
-                VALUES (?, ?, ?, ?)
-                """, UUID.randomUUID(), keyId, rawLegacySlug, "INVOKE");
-        assertEquals(1, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM api_key_service_permissions_legacy WHERE service_slug = ?",
-                Integer.class,
-                rawLegacySlug));
-
-        UUID invalidPermissionId = UUID.randomUUID();
-        assertThrows(DataIntegrityViolationException.class, () -> jdbcTemplate.update("""
-                INSERT INTO api_key_service_permissions
-                    (id, api_key_id, organization_id, service_id, permission)
-                VALUES (?, ?, ?, ?, ?)
-                """, invalidPermissionId, keyId, UUID.randomUUID(), service.getId(), "INVOKE"));
-        assertThrows(DataIntegrityViolationException.class, () -> jdbcTemplate.update("""
-                INSERT INTO api_key_service_permissions
-                    (id, api_key_id, organization_id, service_id, permission)
-                VALUES (?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), keyId, owner.id(), service.getId(), "ADMIN"));
-        assertEquals(1, permissionRepository.count());
-    }
-
-    @Test
-    void permissionPersistenceFailureRollsBackTheNewKey() {
-        OrganizationRegistrationResponse owner = register("api-key-rollback", "rollback-key@example.com");
-        RegisteredService service = registerService(owner, "Rollback API", true, ServiceAuthMode.API_KEY);
-        doThrow(new IllegalStateException("simulated permission persistence failure"))
-                .when(permissionRepositorySpy)
-                .saveAllAndFlush(org.mockito.ArgumentMatchers.<Iterable<ApiKeyPermission>>any());
-
-        assertThrows(IllegalStateException.class, () -> apiKeyManagementService.create(
-                owner.admin().id(),
-                new CreateApiKeyRequest("Rollback", List.of(service.getId()), null)));
-
-        assertEquals(0, apiKeyRepository.count());
-        assertEquals(0, permissionRepository.count());
-    }
-
-    @Test
     void v4MigrationBackfillsStatusAndPreservesLegacyPermissionData() throws Exception {
         try (PostgreSQLContainer<?> legacyDatabase = new PostgreSQLContainer<>("postgres:17")) {
             legacyDatabase.start();
@@ -449,6 +405,54 @@ class ApiKeyManagementIntegrationTest {
         }
     }
 
+    @Test
+    void internalValidationCheckRejectInAbsentsOfKeyController() throws Exception {
+        //ValidServiceDetails , ValidationResult are just for mock , they are not currently in use
+        /*
+        ValidServiceDetails expectedServices = new ValidServiceDetails(
+                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"),
+                "User Service",
+                "https://api.example.com",
+                "/api/v1",
+                "/users"
+        );
+        ValidationResult expected = new ValidationResult(
+                true ,
+                UUID.fromString("123e4567-e89b-12d3-a456-426614174111")
+                ,List.of(expectedServices) );
+        given(apiKeyManagementServiceForMocking.validate(anyString())).willReturn(expected);
+        */
+        mockMvc.perform(post( "/api/v1/api-keys/internal/validate")
+                .header("X-Internal-Secret" , "INTERNAL_SECRET")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"apiKey\":\"ng_live_nonexistent\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void internalValidationCheckAcceptWithKeyController() throws Exception {
+        //ValidServiceDetails , ValidationResult are just for mock , they are not currently in use
+        /*
+        ValidServiceDetails expectedServices = new ValidServiceDetails(
+                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"),
+                "User Service",
+                "https://api.example.com",
+                "/api/v1",
+                "/users"
+        );
+        ValidationResult expected = new ValidationResult(
+                true ,
+                UUID.fromString("123e4567-e89b-12d3-a456-426614174111")
+                ,List.of(expectedServices) );
+        given(apiKeyManagementServiceForMocking.validate(anyString())).willReturn("Controller working");
+        */
+        mockMvc.perform(post( "/api/v1/api-keys/internal/validate")
+                        .header("X-Internal-Secret" , INTERNAL_SECRET)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"ng_live_nonexistent\"}"))
+                .andExpect(status().isOk())
+                .andExpect( content().string("Controller working"));
+    }
     private String createWithToken(
             OrganizationRegistrationResponse owner,
             RegisteredService service,

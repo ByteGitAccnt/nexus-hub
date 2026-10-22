@@ -28,7 +28,7 @@ import java.util.Locale;
 )
 public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilterFactory<JwtAuthenticationGatewayFilterFactory.Config> {
 
-    private NexusConfig nexusConfig;
+    private final NexusConfig nexusConfig;
     private final JwtTokenVerifier tokenVerifier;
     private final MeterRegistry meterRegistry;
 
@@ -65,6 +65,8 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
             String authHeader = exchange.getRequest()
                     .getHeaders()
                     .getFirst("Authorization");
+            // api-key comes as a header, so we need to check for it separately
+            // not with Authorization: X-API-Key <access-token> but X-API-Key: ng_live_<secret>
             String apiKeyHeader = exchange.getRequest()
                     .getHeaders()
                     .getFirst("X-API-Key");

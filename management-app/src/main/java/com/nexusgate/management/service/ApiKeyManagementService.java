@@ -1,23 +1,11 @@
 package com.nexusgate.management.service;
 
-import com.nexusgate.management.dto.ApiKeyCreatedResponse;
-import com.nexusgate.management.dto.ApiKeyResponse;
-import com.nexusgate.management.dto.ApiKeyServicePermissionResponse;
-import com.nexusgate.management.dto.CreateApiKeyRequest;
+import com.nexusgate.management.dto.*;
+import com.nexusgate.management.exception.InvalidApiKeyException;
 import com.nexusgate.management.exception.ResourceConflictException;
 import com.nexusgate.management.exception.ResourceNotFoundException;
 import com.nexusgate.management.exception.InvalidRequestException;
-import com.nexusgate.management.model.ApiKey;
-import com.nexusgate.management.model.ApiKeyPermission;
-import com.nexusgate.management.model.ApiKeyPermissionType;
-import com.nexusgate.management.model.ApiKeyStatus;
-import com.nexusgate.management.model.Organization;
-import com.nexusgate.management.model.OrganizationStatus;
-import com.nexusgate.management.model.RegisteredService;
-import com.nexusgate.management.model.ServiceAuthMode;
-import com.nexusgate.management.model.User;
-import com.nexusgate.management.model.UserRole;
-import com.nexusgate.management.model.UserStatus;
+import com.nexusgate.management.model.*;
 import com.nexusgate.management.repository.ApiKeyPermissionRepository;
 import com.nexusgate.management.repository.ApiKeyRepository;
 import com.nexusgate.management.repository.RegisteredServiceRepository;
@@ -36,7 +24,6 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -145,6 +132,33 @@ public class ApiKeyManagementService {
         return toResponse(key, permissionRepository.findAllByApiKeyIdIn(List.of(keyId)));
     }
 
+    @Transactional(readOnly = true)
+    public ValidationResult validate(String apikey) {
+        String secret = hashSecret(apikey);
+        String lookupPrefix = secret.substring(0, Math.min(secret.length(), LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()));
+        ApiKey key = apiKeyRepository.findByLookupPrefix(lookupPrefix)
+                .orElseThrow(() -> new InvalidApiKeyException("Invalid API key"));
+        verifyLookupToHashKey(secret, key.getKeyHash());
+        Instant now = Instant.now();
+
+        if (key.getStatus() != ApiKeyStatus.ACTIVE || key.getRevokedAt() != null || (key.getExpiresAt() != null
+                && !key.getExpiresAt().isAfter(now))) {
+            throw new InvalidApiKeyException("Invalid or expired api key");
+        }
+        //TODO: retrieve the service uri and only sent the needed details
+        List<UUID> serviceIds = permissionRepository.findServiceIdsByApiKeyIdAndPermission(key.getId(), ApiKeyPermissionType.INVOKE);
+        List<RegisteredService> services = serviceRepository.findEligibleForApiKey(serviceIds , key.getOrganization().getId(), ServiceAuthMode.API_KEY);
+        List<ValidServiceDetails> validServices = services.stream()
+                .map(service -> new ValidServiceDetails(
+                        service.getId(),
+                        service.getName(),
+                        service.getTargetUrl(),
+                        service.getBasePath(),
+                        service.getTargetPath()
+                        ))
+                .toList();
+        return new ValidationResult(true, key.getOrganization().getId() ,validServices);
+    }
     private Organization requireActiveAdminOrganization(UUID actorUserId) {
         User actor = userRepository.findById(actorUserId)
                 .orElseThrow(() -> new AccessDeniedException("Active organization administrator required"));
@@ -222,7 +236,13 @@ public class ApiKeyManagementService {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
     }
-
+    private static void verifyLookupToHashKey(String secret, String key) {
+        if (!MessageDigest.isEqual(
+                secret.getBytes(StandardCharsets.US_ASCII),
+                key.getBytes(StandardCharsets.US_ASCII))) {
+            throw new InvalidApiKeyException("Invalid API key");
+        }
+    }
     private record GeneratedSecret(String secret, String lookupPrefix) {
     }
 }

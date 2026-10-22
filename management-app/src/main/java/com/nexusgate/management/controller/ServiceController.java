@@ -45,7 +45,7 @@ public class ServiceController {
                     examples = @ExampleObject(name = "API-key protected service", value = """
                             {
                               "name": "Orders",
-                              "targetUrl": "https://orders.example.com/api",
+                              "targetUrl": "https://orders.example.com",
                               "basePath": "/orders",
                               "targetPath": "/api",
                               "authMode": "API_KEY"

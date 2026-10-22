@@ -10,6 +10,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.SecretKey;
@@ -20,7 +21,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
-
+@Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProperties properties;
@@ -37,14 +38,33 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        System.out.println("SHOULD NOT FILTER CHECK FROM JWT FILTER");
+        String method = request.getMethod();
+        String path = request.getRequestURI();
+        boolean check = request.getMethod().equals("POST")
+                && request.getRequestURI()
+                .equals("/api/v1/api-keys/internal/validate");
+        System.out.println("Method : " + method);
+        System.out.println("Path : " + path);
+        System.out.println("SHOULD NOT FILTER: " + check);
+        return check;
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        System.out.println("JWT FILTER EXECUTING");
         String authorization = request.getHeader("Authorization");
+        System.out.println("JWT FILTER :HEADER RECEAVED:" + authorization);
         if (authorization == null) {
+            System.out.println("JWT FILTER :HEADER RECEAVED:WAS NULL" );
             filterChain.doFilter(request, response);
             return;
         }
+        System.out.println("JWT FILTER :HEADER RECEAVED:WAS NOT NULL" );
         if (!authorization.startsWith("Bearer ") || authorization.length() <= "Bearer ".length()) {
+            System.out.println("JWT FILTER :HEADER RECEAVED:BEARER MISSING OR INVALID" );
             filterChain.doFilter(request, response);
             return;
         }

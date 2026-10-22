@@ -28,4 +28,5 @@ public interface ApiKeyRepository extends JpaRepository<ApiKey, UUID> {
     );
 
     boolean existsByLookupPrefix(String lookupPrefix);
+    Optional<ApiKey> findByLookupPrefix(String lookupPrefix);
 }

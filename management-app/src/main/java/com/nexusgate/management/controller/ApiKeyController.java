@@ -1,9 +1,6 @@
 package com.nexusgate.management.controller;
 
-import com.nexusgate.management.dto.ApiKeyCreatedResponse;
-import com.nexusgate.management.dto.ApiKeyResponse;
-import com.nexusgate.management.dto.CreateApiKeyRequest;
-import com.nexusgate.management.dto.UpdateApiKeyStatusRequest;
+import com.nexusgate.management.dto.*;
 import com.nexusgate.management.security.AuthenticatedUserPrincipal;
 import com.nexusgate.management.service.ApiKeyManagementService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,6 +12,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -115,5 +113,18 @@ public class ApiKeyController {
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @PathVariable UUID keyId) {
         return apiKeyManagementService.revoke(principal.userId(), keyId);
+    }
+
+    @PostMapping("/internal/validate")
+    @ResponseStatus(HttpStatus.OK)
+    public ResponseEntity<String> validate(@RequestBody @Valid ValidationRequest request) {
+        System.out.println("VALIDATE API KEY REQUEST RECEIVED: " + request.apiKey());
+        if(request.apiKey() == null || request.apiKey().isBlank()) {
+            System.out.println("VALIDATE API KEY REQUEST RECEIVED: missing API key");
+            return ResponseEntity.badRequest().body("API key is required");
+        }else{
+            System.out.println("VALIDATE API KEY REQUEST RECEIVED: validating API key");
+            return ResponseEntity.ok("Controller working");
+        }
     }
 }
