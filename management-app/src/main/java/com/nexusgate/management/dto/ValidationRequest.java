@@ -4,6 +4,10 @@ import jakarta.validation.constraints.NotBlank;
 
 public record ValidationRequest(
         @NotBlank
-        String apiKey
+        String apiKey,
+        @NotBlank
+        String lookupPrefix,
+        @NotBlank
+        String reqPath
 ) {
 }

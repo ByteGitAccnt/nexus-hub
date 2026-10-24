@@ -1,12 +1,8 @@
 package com.nexusgate.management;
 
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.nexusgate.management.dto.*;
-import com.nexusgate.management.model.ApiKey;
-import com.nexusgate.management.model.ApiKeyPermission;
-import com.nexusgate.management.model.ApiKeyStatus;
-import com.nexusgate.management.model.Organization;
-import com.nexusgate.management.model.RegisteredService;
-import com.nexusgate.management.model.ServiceAuthMode;
+import com.nexusgate.management.model.*;
 import com.nexusgate.management.repository.ApiKeyPermissionRepository;
 import com.nexusgate.management.repository.ApiKeyRepository;
 import com.nexusgate.management.repository.OrganizationRepository;
@@ -20,7 +16,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -31,29 +26,28 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.test.web.servlet.ResultMatcher;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import java.util.Map;
 
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.Date;
-import java.util.HexFormat;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.reset;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -70,9 +64,14 @@ class ApiKeyManagementIntegrationTest {
     private static final String ISSUER = "http://localhost:8090";
     private static final String AUDIENCE = "nexushub";
     private static final String INTERNAL_SECRET = "internal-validation-shared-secret";
+    private static final int LOOKUP_RANDOM_LENGTH = 12;
+    private static final String SECRET_PREFIX = "ng_live_";
+    private static final int LOOKUP_PREFIX_LENGTH = SECRET_PREFIX.length() + LOOKUP_RANDOM_LENGTH;
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17");
+
+    ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -102,12 +101,10 @@ class ApiKeyManagementIntegrationTest {
     @Autowired
     private OrganizationRegistrationService organizationRegistrationService;
 
+
     @Autowired
     private ApiKeyManagementService apiKeyManagementService;
 
-
-    @MockitoBean
-    private ApiKeyManagementService apiKeyManagementServiceForMocking;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -407,21 +404,6 @@ class ApiKeyManagementIntegrationTest {
 
     @Test
     void internalValidationCheckRejectInAbsentsOfKeyController() throws Exception {
-        //ValidServiceDetails , ValidationResult are just for mock , they are not currently in use
-        /*
-        ValidServiceDetails expectedServices = new ValidServiceDetails(
-                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"),
-                "User Service",
-                "https://api.example.com",
-                "/api/v1",
-                "/users"
-        );
-        ValidationResult expected = new ValidationResult(
-                true ,
-                UUID.fromString("123e4567-e89b-12d3-a456-426614174111")
-                ,List.of(expectedServices) );
-        given(apiKeyManagementServiceForMocking.validate(anyString())).willReturn(expected);
-        */
         mockMvc.perform(post( "/api/v1/api-keys/internal/validate")
                 .header("X-Internal-Secret" , "INTERNAL_SECRET")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -429,29 +411,37 @@ class ApiKeyManagementIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+
     @Test
-    void internalValidationCheckAcceptWithKeyController() throws Exception {
-        //ValidServiceDetails , ValidationResult are just for mock , they are not currently in use
-        /*
-        ValidServiceDetails expectedServices = new ValidServiceDetails(
-                UUID.fromString("123e4567-e89b-12d3-a456-426614174000"),
-                "User Service",
-                "https://api.example.com",
-                "/api/v1",
-                "/users"
-        );
-        ValidationResult expected = new ValidationResult(
-                true ,
-                UUID.fromString("123e4567-e89b-12d3-a456-426614174111")
-                ,List.of(expectedServices) );
-        given(apiKeyManagementServiceForMocking.validate(anyString())).willReturn("Controller working");
-        */
-        mockMvc.perform(post( "/api/v1/api-keys/internal/validate")
-                        .header("X-Internal-Secret" , INTERNAL_SECRET)
+    void validateApiKey_withValidInternalSecretAndApiKey_returnsSuccess() throws Exception {
+        // Arrange:
+        OrganizationRegistrationResponse owner = register("api-key-owner", "key-owner@example.com");
+        RegisteredService service = registerService(owner, "Orders", true, ServiceAuthMode.API_KEY);
+        String creationResponse = mockMvc.perform(post("/api/v1/api-keys")
+                        .header("Authorization", "Bearer " + jwt(owner.admin().id(), owner.id()))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"apiKey\":\"ng_live_nonexistent\"}"))
+                        .content(createJson("Mobile App Key", List.of(service.getId()), null)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.secret").isNotEmpty())
+                .andExpect(jsonPath("$.apiKey.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.apiKey.name").value("Mobile App Key"))
+                .andExpect(jsonPath("$.apiKey.permissions[0].serviceId").value(service.getId().toString()))
+                .andExpect(jsonPath("$.apiKey.permissions[0].permission").value("INVOKE"))
+                .andExpect(jsonPath("$.apiKey.keyHash").doesNotExist())
+                .andExpect(jsonPath("$.apiKey.secret").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        ApiKeyCreatedResponse result = mapper.readValue(creationResponse, ApiKeyCreatedResponse.class);
+
+        mockMvc.perform(post("/api/v1/api-keys/internal/validate")
+                        .header("X-Internal-Secret", INTERNAL_SECRET)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mapper.writeValueAsString(
+                                new ValidationRequest(result.secret() , result.secret().substring(0 , LOOKUP_PREFIX_LENGTH)))))
                 .andExpect(status().isOk())
-                .andExpect( content().string("Controller working"));
+                .andExpect(jsonPath("$.valid").value(true))
+                .andExpect(jsonPath("$.organizationId").exists())
+                .andExpect(jsonPath("$.services").isArray())
+                .andExpect(jsonPath("$.services.length()").value(1));
     }
     private String createWithToken(
             OrganizationRegistrationResponse owner,

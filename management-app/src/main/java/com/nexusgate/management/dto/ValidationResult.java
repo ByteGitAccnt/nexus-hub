@@ -6,6 +6,6 @@ import java.util.UUID;
 public record ValidationResult(
         boolean valid,
         UUID organizationId,
-        List<ValidServiceDetails> services
+        ValidServiceDetails services
 ) {
 }

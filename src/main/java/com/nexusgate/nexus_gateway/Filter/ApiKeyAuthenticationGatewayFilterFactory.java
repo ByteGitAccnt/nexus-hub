@@ -5,13 +5,16 @@ import com.nexusgate.nexus_gateway.Dto.ValidationRequest;
 import com.nexusgate.nexus_gateway.Dto.ValidationResult;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.OrderedGatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.server.ServerWebExchange;
 
 import java.util.List;
 
@@ -20,10 +23,14 @@ import java.util.List;
 public class ApiKeyAuthenticationGatewayFilterFactory
         extends AbstractGatewayFilterFactory<ApiKeyAuthenticationGatewayFilterFactory.Config> {
     private final NexusConfig nexusConfig;
+    private final int apiLookupPrefixLength;
+    private final WebClient webClient;
 
-    public ApiKeyAuthenticationGatewayFilterFactory(NexusConfig nexusConfig) {
+    public ApiKeyAuthenticationGatewayFilterFactory(NexusConfig nexusConfig , @Value("${API_LOOKUP_PREFIX_LENGTH}") int apiLookupPrefixLength ,WebClient webClient) {
         super(Config.class);
         this.nexusConfig = nexusConfig;
+        this.apiLookupPrefixLength = apiLookupPrefixLength;
+        this.webClient = webClient;
     }
 
     @Override
@@ -45,25 +52,86 @@ public class ApiKeyAuthenticationGatewayFilterFactory
             if (isPublic && authHeader == null) {
                 return chain.filter(exchange);
             }
-
-            if (exchange.getRequest().getHeaders().getFirst("X-API-Key") != null) {
-               /* String validationUrl = nexusConfig.getServices().get("nexus-hub").getUrl() + "/internal/api-keys/validate";
-                Mono<ValidationResult> result = webClient.post()
-                        .uri(validationUrl)
-                        .bodyValue(new ValidationRequest)
-                        .retrieve()
-                        .bodyToMono(ValidationResult.class);
-
-*/
+            String apiKey = exchange.getRequest().getHeaders().getFirst("X-API-Key");
+            if (apiKey == null || apiKey.isBlank() || apiKey.length() < apiLookupPrefixLength) {
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
             }
+            String validationUrl = nexusConfig.getServices().get("nexus-hub").getUrl() + "/api/v1/api-keys/internal/validate";
+            return webClient.post()
+                    .uri(validationUrl)
+                    .bodyValue(new ValidationRequest(
+                            apiKey,
+                            apiKey.substring(0 , apiLookupPrefixLength) ,
+                            exchange.getRequest().getPath().value()
+                    ))
+                    .retrieve()
+                    .bodyToMono(ValidationResult.class)
+                    .flatMap(result -> {
+                        if (!result.valid()) {
+                            exchange.getResponse()
+                                    .setStatusCode(HttpStatus.UNAUTHORIZED);
+                            return exchange.getResponse().setComplete();
+                        }
+                        if(result.service() == null){
+                            exchange.getResponse()
+                                    .setStatusCode(HttpStatus.FORBIDDEN);
+                            return exchange.getResponse().setComplete();
+                        }
+                        String rewrittenPath = rewritePath(
+                                exchange.getRequest().getPath().value(),
+                                result.service().serviceBasePath(),
+                                result.service().serviceTargetPath());
+                        exchange.getAttributes().put(
+                                "validatedOrganizationId",
+                                result.organizationId()
+                        );
 
-            return chain.filter(exchange);
+                        exchange.getAttributes().put(
+                                "validatedService",
+                                result.service()
+                        );
+                        // Rewrite the incoming request path.
+                        ServerHttpRequest mutatedRequest = exchange.getRequest()
+                                .mutate()
+                                .path(rewrittenPath)
+                                .build();
+                        ServerWebExchange mutatedExchange = exchange.mutate()
+                                .request(mutatedRequest)
+                                .build();
+                        return chain.filter(mutatedExchange);
+                    })
+                    .onErrorResume(error -> {
+                        exchange.getResponse()
+                                .setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);
+                        return exchange.getResponse().setComplete();
+                    });
         };
         return new OrderedGatewayFilter(filter, -85);
     }
+    private String rewritePath(String requestPath, String basePath, String targetPath) {
+        String path = normalizePath(requestPath);
+        String base = normalizePath(basePath);
+        String target = normalizePath(targetPath);
 
+        if (!path.equals(base) && !path.startsWith(base + "/")) {
+            throw new IllegalArgumentException(
+                    "Request path does not match service base path");
+        }
+
+        String suffix = path.substring(base.length());
+
+        return target + suffix;
+    }
+    private String normalizePath(String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException("Path must not be blank");
+        }
+        if (path.length() > 1 && path.endsWith("/")) {
+            return path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
     @Getter
     @Setter
     public static class Config {

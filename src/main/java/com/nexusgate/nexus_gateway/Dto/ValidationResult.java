@@ -1,4 +1,10 @@
 package com.nexusgate.nexus_gateway.Dto;
 
-public record ValidationResult() {
+import java.util.UUID;
+
+public record ValidationResult(
+        boolean valid,
+        UUID organizationId,
+        ValidServiceDetails service
+) {
 }

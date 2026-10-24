@@ -74,7 +74,7 @@ public class ApiKeyController {
     public ApiKeyCreatedResponse create(
             @AuthenticationPrincipal AuthenticatedUserPrincipal principal,
             @Valid @RequestBody CreateApiKeyRequest request) {
-        return apiKeyManagementService.create(principal.userId(), request);
+      return apiKeyManagementService.create(principal.userId(), request);
     }
 
     @GetMapping
@@ -117,14 +117,7 @@ public class ApiKeyController {
 
     @PostMapping("/internal/validate")
     @ResponseStatus(HttpStatus.OK)
-    public ResponseEntity<String> validate(@RequestBody @Valid ValidationRequest request) {
-        System.out.println("VALIDATE API KEY REQUEST RECEIVED: " + request.apiKey());
-        if(request.apiKey() == null || request.apiKey().isBlank()) {
-            System.out.println("VALIDATE API KEY REQUEST RECEIVED: missing API key");
-            return ResponseEntity.badRequest().body("API key is required");
-        }else{
-            System.out.println("VALIDATE API KEY REQUEST RECEIVED: validating API key");
-            return ResponseEntity.ok("Controller working");
-        }
+    public ResponseEntity<ValidationResult> validate(@RequestBody @Valid ValidationRequest request) {
+        return ResponseEntity.ok(apiKeyManagementService.validate(request.apiKey() , request.lookupPrefix() , request.reqPath()));
     }
 }

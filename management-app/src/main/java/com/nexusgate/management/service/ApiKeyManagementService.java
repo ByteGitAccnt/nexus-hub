@@ -19,12 +19,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HexFormat;
-import java.util.HashSet;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 public class ApiKeyManagementService {
@@ -133,9 +128,9 @@ public class ApiKeyManagementService {
     }
 
     @Transactional(readOnly = true)
-    public ValidationResult validate(String apikey) {
+    public ValidationResult validate(String apikey , String lookupPrefix, String reqPath) {
         String secret = hashSecret(apikey);
-        String lookupPrefix = secret.substring(0, Math.min(secret.length(), LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()));
+        //String lookupPrefix = secret.substring(0, Math.min(secret.length(), LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()));
         ApiKey key = apiKeyRepository.findByLookupPrefix(lookupPrefix)
                 .orElseThrow(() -> new InvalidApiKeyException("Invalid API key"));
         verifyLookupToHashKey(secret, key.getKeyHash());
@@ -145,19 +140,59 @@ public class ApiKeyManagementService {
                 && !key.getExpiresAt().isAfter(now))) {
             throw new InvalidApiKeyException("Invalid or expired api key");
         }
-        //TODO: retrieve the service uri and only sent the needed details
+
         List<UUID> serviceIds = permissionRepository.findServiceIdsByApiKeyIdAndPermission(key.getId(), ApiKeyPermissionType.INVOKE);
-        List<RegisteredService> services = serviceRepository.findEligibleForApiKey(serviceIds , key.getOrganization().getId(), ServiceAuthMode.API_KEY);
-        List<ValidServiceDetails> validServices = services.stream()
-                .map(service -> new ValidServiceDetails(
-                        service.getId(),
-                        service.getName(),
-                        service.getTargetUrl(),
-                        service.getBasePath(),
-                        service.getTargetPath()
-                        ))
-                .toList();
-        return new ValidationResult(true, key.getOrganization().getId() ,validServices);
+        List<RegisteredService> services = serviceRepository.findEligibleForApiKey(
+                serviceIds ,
+                key.getOrganization().getId(),
+                ServiceAuthMode.API_KEY);
+        RegisteredService matchedService = services.stream()
+                .filter(service ->
+                        matchesBasePath(reqPath, service.getBasePath()))
+                .max(Comparator.comparingInt(service ->
+                        normalizePath(service.getBasePath()).length()))
+                .orElse(null);
+
+        if (matchedService == null) {
+            // The API key may be valid, but no authorized service
+            // matches this incoming path.
+            return new ValidationResult(
+                    true,
+                    key.getOrganization().getId(),
+                    null
+            );
+        }
+        ValidServiceDetails serviceDetails = new ValidServiceDetails(
+                matchedService.getId(),
+                matchedService.getName(),
+                matchedService.getTargetUrl(),
+                matchedService.getBasePath(),
+                matchedService.getTargetPath()
+        );
+
+        return new ValidationResult(
+                true,
+                key.getOrganization().getId(),
+                serviceDetails
+        );
+    }
+    private boolean matchesBasePath(String requestPath, String basePath) {
+        String path = normalizePath(requestPath);
+        String base = normalizePath(basePath);
+
+        return path.equals(base) || path.startsWith(base + "/");
+    }
+
+    private String normalizePath(String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException("Path must not be blank");
+        }
+
+        if (path.length() > 1 && path.endsWith("/")) {
+            return path.substring(0, path.length() - 1);
+        }
+
+        return path;
     }
     private Organization requireActiveAdminOrganization(UUID actorUserId) {
         User actor = userRepository.findById(actorUserId)
@@ -228,7 +263,7 @@ public class ApiKeyManagementService {
         throw new IllegalStateException("Unable to generate a unique API-key lookup prefix");
     }
 
-    private static String hashSecret(String secret) {
+    private String hashSecret(String secret) {
         try {
             return HexFormat.of().formatHex(
                     MessageDigest.getInstance("SHA-256").digest(secret.getBytes(StandardCharsets.US_ASCII)));

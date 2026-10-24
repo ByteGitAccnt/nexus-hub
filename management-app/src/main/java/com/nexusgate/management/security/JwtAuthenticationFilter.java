@@ -39,32 +39,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        System.out.println("SHOULD NOT FILTER CHECK FROM JWT FILTER");
-        String method = request.getMethod();
-        String path = request.getRequestURI();
-        boolean check = request.getMethod().equals("POST")
+        return  request.getMethod().equals("POST")
                 && request.getRequestURI()
                 .equals("/api/v1/api-keys/internal/validate");
-        System.out.println("Method : " + method);
-        System.out.println("Path : " + path);
-        System.out.println("SHOULD NOT FILTER: " + check);
-        return check;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        System.out.println("JWT FILTER EXECUTING");
         String authorization = request.getHeader("Authorization");
-        System.out.println("JWT FILTER :HEADER RECEAVED:" + authorization);
         if (authorization == null) {
-            System.out.println("JWT FILTER :HEADER RECEAVED:WAS NULL" );
             filterChain.doFilter(request, response);
             return;
         }
-        System.out.println("JWT FILTER :HEADER RECEAVED:WAS NOT NULL" );
         if (!authorization.startsWith("Bearer ") || authorization.length() <= "Bearer ".length()) {
-            System.out.println("JWT FILTER :HEADER RECEAVED:BEARER MISSING OR INVALID" );
             filterChain.doFilter(request, response);
             return;
         }
