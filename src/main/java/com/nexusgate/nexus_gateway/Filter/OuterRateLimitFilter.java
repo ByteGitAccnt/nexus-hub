@@ -28,9 +28,7 @@ public class OuterRateLimitFilter implements GlobalFilter , Ordered {
     private final RedisTokenBucket tokenBucket;
     private final NexusConfig nexusConfig;
     private final MeterRegistry meterRegistry;
-    //TODO :ENCHANTMENT AFTER COMPLETION:  we need to add a header check for proxies which are listed in the config file,
-    // if the request is coming from a proxy which is not listed in the config file, we will reject the request
-    // if no proxies listed and strategy is 'remote-address' then we allow by ips
+
     public OuterRateLimitFilter(ClientIpResolver clientIpResolver, RateLimitKeyGenerator rateLimitKeyGenerator, RedisTokenBucket tokenBucket, NexusConfig nexusConfig, MeterRegistry meterRegistry) {       this.clientIpResolver = clientIpResolver;
         this.KeyGenerator = rateLimitKeyGenerator;
         this.tokenBucket = tokenBucket;

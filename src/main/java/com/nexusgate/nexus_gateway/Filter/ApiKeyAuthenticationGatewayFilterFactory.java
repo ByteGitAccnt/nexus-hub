@@ -37,10 +37,10 @@ public class ApiKeyAuthenticationGatewayFilterFactory
     public GatewayFilter apply(Config config) {
         GatewayFilter filter = (exchange, chain) -> {
             String authHeader = exchange.getRequest().getHeaders().getFirst("Authorization");
-            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                // The preceding JWT filter has already validated and authenticated this token.
-                return chain.filter(exchange);
-            }
+//            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+//                // The preceding JWT filter has already validated and authenticated this token.
+//                return chain.filter(exchange);
+//            }
 
             String requestPath = exchange.getRequest().getPath().value();
             String servicePath = config.getServicePath() == null ? "" : config.getServicePath();

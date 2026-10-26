@@ -18,8 +18,8 @@ services:
       retries: 10
       start_period: 10s
   redis:
-    image: redis:7-alpine
-    container_name: nexusgate-redis
+    image: redis:7
+    container_name: nexushub-redis
     restart: unless-stopped
     command: [ "redis-server", "--appendonly", "yes" ]
     ports:

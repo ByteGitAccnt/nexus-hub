@@ -55,12 +55,14 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
 
             boolean isPublic = publicEndpoints.stream()
                     .anyMatch(relativePath::equals);
-            String authMode = config.getAuthMode() == null
-                    ? "JWT"
-                    : config.getAuthMode().toUpperCase(Locale.ROOT);
-            if (!List.of("JWT", "API_KEY", "PUBLIC").contains(authMode)) {
-                return reject(exchange, "unsupported_auth_mode");
-            }
+
+//            String authMode = config.getAuthMode() == null
+//                    ? "JWT"
+//                    : config.getAuthMode().toUpperCase(Locale.ROOT);
+//            //exchange.getAttributes().put("authMode", authMode);
+//            if (!List.of("JWT", "API_KEY", "PUBLIC").contains(authMode)) {
+//                return reject(exchange, "unsupported_auth_mode");
+//            }
 
             String authHeader = exchange.getRequest()
                     .getHeaders()
@@ -70,20 +72,22 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
             String apiKeyHeader = exchange.getRequest()
                     .getHeaders()
                     .getFirst("X-API-Key");
+            boolean hasJwt = authHeader != null && !authHeader.isBlank();
+            boolean hasApiKey = apiKeyHeader != null && !apiKeyHeader.isBlank();
 
-            if (isPublic && authHeader == null) {
+
+            if (hasApiKey) {
+                exchange.getAttributes().put("authMode", "API_KEY");
                 return chain.filter(exchange);
             }
-
-            if (authHeader == null) {
-                if ("PUBLIC".equals(authMode) && (apiKeyHeader == null || apiKeyHeader.isBlank())) {
+            if (!hasJwt) {
+                if (isPublic) {
+                    exchange.getAttributes().put("authMode", "PUBLIC");
                     return chain.filter(exchange);
                 }
-                if ("API_KEY".equals(authMode) && apiKeyHeader != null && !apiKeyHeader.isBlank()) {
-                    return chain.filter(exchange);
-                }
-                return reject(exchange, "missing_or_unsupported_credentials");
+                return reject(exchange, "missing_credentials");
             }
+            exchange.getAttributes().put("authMode", "JWT");
 
             if (!authHeader.startsWith("Bearer ") || authHeader.length() == 7) {
                 return reject(exchange, "missing_or_invalid_header");

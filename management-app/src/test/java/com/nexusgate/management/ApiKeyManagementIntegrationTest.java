@@ -436,12 +436,11 @@ class ApiKeyManagementIntegrationTest {
                         .header("X-Internal-Secret", INTERNAL_SECRET)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(mapper.writeValueAsString(
-                                new ValidationRequest(result.secret() , result.secret().substring(0 , LOOKUP_PREFIX_LENGTH)))))
+                                new ValidationRequest(result.secret() , result.secret().substring(0 , LOOKUP_PREFIX_LENGTH) ,"/orders"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.valid").value(true))
                 .andExpect(jsonPath("$.organizationId").exists())
-                .andExpect(jsonPath("$.services").isArray())
-                .andExpect(jsonPath("$.services.length()").value(1));
+                .andExpect(jsonPath("$.services").exists());
     }
     private String createWithToken(
             OrganizationRegistrationResponse owner,

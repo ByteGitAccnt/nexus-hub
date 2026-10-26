@@ -51,7 +51,11 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
             if (!policy.isEnabled()) {
                 return chain.filter(exchange);
             }
+            String authMode = exchange.getAttribute("authMode");
 
+            if ("API_KEY".equals(authMode)) {
+                return handleApiKeyRequest(exchange, chain, policy);
+            }
             return ReactiveSecurityContextHolder.getContext()
                     .hasElement()
                     .flatMap(hasContext -> {
@@ -89,7 +93,25 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
                         chain
                     )
         );
+    }
+    private Mono<Void> handleApiKeyRequest(ServerWebExchange exchange, GatewayFilterChain chain, RateLimitPolicy policy) {
+        String organizationId = exchange.getAttribute("organizationId");
+        String serviceId = exchange.getAttribute("serviceId");
 
+        if (organizationId == null || serviceId == null) {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
+
+        String bucketKey = keyGenerator.forApiKey(organizationId, serviceId);
+        return tokenBucket.consume(bucketKey, policy)
+                .flatMap(result -> handleResult(exchange, chain, policy, result))
+                .onErrorResume(error ->
+                        handleRedisFailure(
+                                exchange,
+                                chain
+                        )
+                );
     }
     private Mono<Void> handleResult(ServerWebExchange exchange , GatewayFilterChain chain, RateLimitPolicy policy, RateLimitResult result) {
         exchange.getResponse()

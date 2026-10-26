@@ -49,7 +49,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                 args.put("authMode", (service.getAuthMode() == null
                         ? ServiceAuthMode.JWT
                         : service.getAuthMode()).name());
-                // feeding the identity claim to the jwt filter
+                // feeding the identity claim , auth mode to the jwt filter
                 String identityClaim = config.getSecurity()
                         .getJwt()
                         .getIdentityClaim();
@@ -112,7 +112,6 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
             }
             apiRoute.setFilters(filters);
             routes.add(apiRoute);
-            // System.out.println("FILTERS: " + apiRoute.getFilters());
             // Management route
             if (config.getManagement() != null && config.getManagement().isEnabled()) {
 

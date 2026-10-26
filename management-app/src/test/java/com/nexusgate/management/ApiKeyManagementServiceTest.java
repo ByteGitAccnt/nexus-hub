@@ -100,14 +100,14 @@ class ApiKeyManagementServiceTest {
         )).willReturn(List.of(service));
 
         // Act
-        ValidationResult result = apiKeyManagementService.validate(apiKey ,"lookup_test" ,"/api/v1" );
+        ValidationResult result = apiKeyManagementService.validate(apiKey ,lookupPrefix ,"/api/v1" );
 
         // Assert
         assertTrue(result.valid());
         assertEquals(organizationId, result.organizationId());
-        assertEquals(1, result.services().size());
 
-        ValidServiceDetails actual = result.services().getFirst();
+
+        ValidServiceDetails actual = result.services();
 
         assertEquals(serviceId,actual.serviceId());
         assertEquals("User Service", actual.serviceName());
@@ -154,7 +154,7 @@ class ApiKeyManagementServiceTest {
 
         assertThrows(
                 InvalidApiKeyException.class,
-                () -> apiKeyManagementService.validate(apiKey , "lookup" , "/api/v1")
+                () -> apiKeyManagementService.validate(apiKey , lookupPrefix , "/api/v1")
         );
 
         then(permissionRepository).shouldHaveNoInteractions();
