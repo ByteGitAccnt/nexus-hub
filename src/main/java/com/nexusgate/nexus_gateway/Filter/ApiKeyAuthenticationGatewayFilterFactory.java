@@ -25,22 +25,27 @@ public class ApiKeyAuthenticationGatewayFilterFactory
     private final NexusConfig nexusConfig;
     private final int apiLookupPrefixLength;
     private final WebClient webClient;
+    private final String INTERNAL_SECRET;
 
-    public ApiKeyAuthenticationGatewayFilterFactory(NexusConfig nexusConfig , @Value("${API_LOOKUP_PREFIX_LENGTH}") int apiLookupPrefixLength ,WebClient webClient) {
+    public ApiKeyAuthenticationGatewayFilterFactory(NexusConfig nexusConfig,
+            @Value("${API_LOOKUP_PREFIX_LENGTH}") int apiLookupPrefixLength, WebClient webClient,
+            @Value("${NEXUSHUB_INTERNAL_SHARED_SECRET}") String internal_secret) {
         super(Config.class);
         this.nexusConfig = nexusConfig;
         this.apiLookupPrefixLength = apiLookupPrefixLength;
         this.webClient = webClient;
+        this.INTERNAL_SECRET = internal_secret;
     }
 
     @Override
     public GatewayFilter apply(Config config) {
         GatewayFilter filter = (exchange, chain) -> {
             String authHeader = exchange.getRequest().getHeaders().getFirst("Authorization");
-//            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-//                // The preceding JWT filter has already validated and authenticated this token.
-//                return chain.filter(exchange);
-//            }
+            // if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            // // The preceding JWT filter has already validated and authenticated this
+            // token.
+            // return chain.filter(exchange);
+            // }
 
             String requestPath = exchange.getRequest().getPath().value();
             String servicePath = config.getServicePath() == null ? "" : config.getServicePath();
@@ -57,14 +62,15 @@ public class ApiKeyAuthenticationGatewayFilterFactory
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
             }
-            String validationUrl = nexusConfig.getServices().get("nexus-hub").getUrl() + "/api/v1/api-keys/internal/validate";
+            String validationUrl = nexusConfig.getServices().get("nexus-hub").getUrl()
+                    + "/api/v1/api-keys/internal/validate";
             return webClient.post()
                     .uri(validationUrl)
+                    .header("X-Internal-Secret", INTERNAL_SECRET)
                     .bodyValue(new ValidationRequest(
                             apiKey,
-                            apiKey.substring(0 , apiLookupPrefixLength) ,
-                            exchange.getRequest().getPath().value()
-                    ))
+                            apiKey.substring(0, apiLookupPrefixLength),
+                            exchange.getRequest().getPath().value()))
                     .retrieve()
                     .bodyToMono(ValidationResult.class)
                     .flatMap(result -> {
@@ -73,7 +79,7 @@ public class ApiKeyAuthenticationGatewayFilterFactory
                                     .setStatusCode(HttpStatus.UNAUTHORIZED);
                             return exchange.getResponse().setComplete();
                         }
-                        if(result.service() == null){
+                        if (result.service() == null) {
                             exchange.getResponse()
                                     .setStatusCode(HttpStatus.FORBIDDEN);
                             return exchange.getResponse().setComplete();
@@ -84,13 +90,11 @@ public class ApiKeyAuthenticationGatewayFilterFactory
                                 result.service().serviceTargetPath());
                         exchange.getAttributes().put(
                                 "validatedOrganizationId",
-                                result.organizationId()
-                        );
+                                result.organizationId());
 
                         exchange.getAttributes().put(
                                 "validatedService",
-                                result.service()
-                        );
+                                result.service());
                         // Rewrite the incoming request path.
                         ServerHttpRequest mutatedRequest = exchange.getRequest()
                                 .mutate()
@@ -109,6 +113,7 @@ public class ApiKeyAuthenticationGatewayFilterFactory
         };
         return new OrderedGatewayFilter(filter, -85);
     }
+
     private String rewritePath(String requestPath, String basePath, String targetPath) {
         String path = normalizePath(requestPath);
         String base = normalizePath(basePath);
@@ -123,6 +128,7 @@ public class ApiKeyAuthenticationGatewayFilterFactory
 
         return target + suffix;
     }
+
     private String normalizePath(String path) {
         if (path == null || path.isBlank()) {
             throw new IllegalArgumentException("Path must not be blank");
@@ -132,6 +138,7 @@ public class ApiKeyAuthenticationGatewayFilterFactory
         }
         return path;
     }
+
     @Getter
     @Setter
     public static class Config {
