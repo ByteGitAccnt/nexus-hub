@@ -1,6 +1,7 @@
 package com.nexusgate.management.service;
 
 import com.nexusgate.management.dto.*;
+import com.nexusgate.management.exception.ApiKeyPermissionDeniedException;
 import com.nexusgate.management.exception.InvalidApiKeyException;
 import com.nexusgate.management.exception.ResourceConflictException;
 import com.nexusgate.management.exception.ResourceNotFoundException;
@@ -128,16 +129,20 @@ public class ApiKeyManagementService {
     }
 
     @Transactional(readOnly = true)
-    public ValidationResult validate(String apikey , String lookupPrefix, String reqPath) {
-        String secret = hashSecret(apikey);
-        //String lookupPrefix = secret.substring(0, Math.min(secret.length(), LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()));
+    public ValidationResult validate(String apiKeySecret, String reqPath) {
+        if (apiKeySecret == null
+                || !apiKeySecret.matches("ng_live_[A-Za-z0-9_-]{43}")) {
+            throw new InvalidApiKeyException("Invalid API key");
+        }
+        String lookupPrefix = apiKeySecret.substring(0, SECRET_PREFIX.length() + LOOKUP_RANDOM_LENGTH);
         ApiKey key = apiKeyRepository.findByLookupPrefix(lookupPrefix)
                 .orElseThrow(() -> new InvalidApiKeyException("Invalid API key"));
-        verifyLookupToHashKey(secret, key.getKeyHash());
+        verifyLookupToHashKey(hashSecret(apiKeySecret), key.getKeyHash());
         Instant now = Instant.now();
 
         if (key.getStatus() != ApiKeyStatus.ACTIVE || key.getRevokedAt() != null || (key.getExpiresAt() != null
-                && !key.getExpiresAt().isAfter(now))) {
+                && !key.getExpiresAt().isAfter(now))
+                || key.getOrganization().getStatus() != OrganizationStatus.ACTIVE) {
             throw new InvalidApiKeyException("Invalid or expired api key");
         }
 
@@ -154,13 +159,7 @@ public class ApiKeyManagementService {
                 .orElse(null);
 
         if (matchedService == null) {
-            // The API key may be valid, but no authorized service
-            // matches this incoming path.
-            return new ValidationResult(
-                    true,
-                    key.getOrganization().getId(),
-                    null
-            );
+            throw new ApiKeyPermissionDeniedException();
         }
         ValidServiceDetails serviceDetails = new ValidServiceDetails(
                 matchedService.getId(),
@@ -172,6 +171,7 @@ public class ApiKeyManagementService {
 
         return new ValidationResult(
                 true,
+                key.getId(),
                 key.getOrganization().getId(),
                 serviceDetails
         );

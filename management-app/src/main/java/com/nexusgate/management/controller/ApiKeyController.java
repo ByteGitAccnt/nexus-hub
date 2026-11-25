@@ -118,6 +118,6 @@ public class ApiKeyController {
     @PostMapping("/internal/validate")
     @ResponseStatus(HttpStatus.OK)
     public ResponseEntity<ValidationResult> validate(@RequestBody @Valid ValidationRequest request) {
-        return ResponseEntity.ok(apiKeyManagementService.validate(request.apiKey() , request.lookupPrefix() , request.reqPath()));
+        return ResponseEntity.ok(apiKeyManagementService.validate(request.apiKey(), request.reqPath()));
     }
 }

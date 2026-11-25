@@ -3,6 +3,7 @@ package com.nexusgate.nexus_gateway.Filter;
 import com.nexusgate.nexus_gateway.Config.Logging.LoggingFields;
 import com.nexusgate.nexus_gateway.Config.NexusConfig;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -19,16 +20,19 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
 public class LoggingGatewayFilter implements GlobalFilter, Ordered {
     private final NexusConfig nexusConfig;
     private final MeterRegistry metricRegistry;
+
     public LoggingGatewayFilter(NexusConfig nexusConfig, MeterRegistry metricRegistry) {
         this.nexusConfig = nexusConfig;
         this.metricRegistry = metricRegistry;
     }
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         if (!nexusConfig.getLogging().isEnabled()) {
@@ -36,12 +40,12 @@ public class LoggingGatewayFilter implements GlobalFilter, Ordered {
         }
         LoggingFields fields = nexusConfig.getLogging().getFields();
         Route route = exchange.getAttribute(
-                ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR
-        );
+                ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR);
         String serviceName = route != null ? route.getId() : "unknown";
         // for duration calculation
         long startTime = fields.isDuration() ? System.currentTimeMillis() : 0;
-        //setting request id if not present , accept if present
+        long metricStartTime = System.nanoTime();
+        // setting request id if not present , accept if present
         String incomingRequestId = exchange.getRequest()
                 .getHeaders()
                 .getFirst("X-Request-ID");
@@ -57,12 +61,12 @@ public class LoggingGatewayFilter implements GlobalFilter, Ordered {
                 .getHeaders()
                 .set("X-Request-ID", requestId);
 
-        ServerWebExchange mutatedExchange =  exchange.mutate()
+        ServerWebExchange mutatedExchange = exchange.mutate()
                 .request(request -> request.headers(
-                        httpHeaders -> httpHeaders.set("X-Request-ID", requestId)
-                ))
+                        httpHeaders -> httpHeaders.set("X-Request-ID", requestId)))
                 .build();
-        // the doFinally will execute after the request terminates ON_COMPLETE, ON_ERROR and CANCEL
+        // the doFinally will execute after the request terminates ON_COMPLETE, ON_ERROR
+        // and CANCEL
         return chain.filter(mutatedExchange)
                 .doFinally(signal -> {
                     // after
@@ -78,8 +82,7 @@ public class LoggingGatewayFilter implements GlobalFilter, Ordered {
                     if (fields.isMethod()) {
                         method = String.valueOf(exchange
                                 .getRequest()
-                                .getMethod()
-                        );
+                                .getMethod());
                     }
                     String path = null;
                     if (fields.isPath()) {
@@ -89,48 +92,60 @@ public class LoggingGatewayFilter implements GlobalFilter, Ordered {
                     }
                     String clientIp = null;
                     if (fields.isClientIp()) {
-                       clientIp = Optional.ofNullable(exchange.getRequest().getRemoteAddress())
-                               .map(InetSocketAddress::getAddress)
-                               .map(InetAddress::getHostAddress)
-                               .orElse("unknown");
+                        clientIp = Optional.ofNullable(exchange.getRequest().getRemoteAddress())
+                                .map(InetSocketAddress::getAddress)
+                                .map(InetAddress::getHostAddress)
+                                .orElse("unknown");
                     }
-                    //Build the log message using only the * fields enabled in configuration.
+                    // Build the log message using only the * fields enabled in configuration.
                     StringBuilder logMessage = new StringBuilder("REQUEST");
                     if (fields.isTimestamp()) {
                         logMessage.append(" timestamp:")
                                 .append(timestamp);
-                    } if (fields.isMethod()) {
+                    }
+                    if (fields.isMethod()) {
                         logMessage.append(" method:")
                                 .append(method);
-                    } if (fields.isPath()) {
+                    }
+                    if (fields.isPath()) {
                         logMessage.append(" path:")
                                 .append(path);
-                    } if (fields.isService()) {
+                    }
+                    if (fields.isService()) {
                         logMessage.append(" service:")
                                 .append(serviceName);
-                    } if (fields.isStatus()) {
+                    }
+                    if (fields.isStatus()) {
                         logMessage.append(" status:")
                                 .append(exchange.getResponse()
                                         .getStatusCode());
-                    } if (fields.isDuration()) {
+                    }
+                    if (fields.isDuration()) {
                         logMessage.append(" duration:")
                                 .append(duration)
                                 .append("ms");
-                    } if (fields.isRequestId())
-                    { logMessage.append(" requestId:")
-                            .append(requestId); }
+                    }
+                    if (fields.isRequestId()) {
+                        logMessage.append(" requestId:")
+                                .append(requestId);
+                    }
                     if (fields.isClientIp()) {
                         logMessage.append(" clientIp:")
                                 .append(clientIp);
                     }
                     log.info(logMessage.toString());
-                    if(nexusConfig.getMonitoring().isEnabled()){
+                    if (nexusConfig.getMonitoring().isEnabled()) {
                         String outcome = getOutcome(exchange.getResponse().getStatusCode());
                         metricRegistry.counter(
                                 "nexusgate.requests.routed",
                                 "service", serviceName,
-                                "outcome", outcome
-                        ).increment();
+                                "outcome", outcome).increment();
+                        Timer.builder("nexusgate.response.time")
+                                .tag("service", serviceName)
+                                .register(metricRegistry)
+                                .record(
+                                        System.nanoTime() - metricStartTime,
+                                        TimeUnit.NANOSECONDS);
                     }
 
                 });

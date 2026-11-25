@@ -14,9 +14,9 @@ services:
     url: http://localhost:8081
     path: /api/v1/auth/**
     publicEndpoints:
-      - /login
-      - /register
-      - /refresh
+      - /api/v1/organizations/register
+      - /api/v1/auth/login
+      - /api/v1/auth/refresh
 
   product:
     url: http://localhost:8083
@@ -59,9 +59,13 @@ routes matching requests to the Product Service.
 
 NexusGate acts as the single entry point while the business logic remains in the downstream service.
 
-### `authMode`
+### Authentication selection (not `authMode`)
 
-Selects the service's authentication policy when `security.enabled` is `true`:
+Authentication is selected by request path when `security.enabled` is `true`, not by a service's `authMode` value. Requests to `/nexushub` and its descendants use JWT, except paths explicitly listed under the configured management service's `publicEndpoints`; all other routed requests require `X-API-Key`, validated by the Management App. JWT credentials on ordinary API paths are ignored.
+
+API-key permissions are resolved by matching the incoming request path against an active `API_KEY` registered service belonging to the API key's organization and checking the persisted `INVOKE` permission. The Gateway does not send an organization or service ID supplied by the caller.
+
+The legacy `authMode` example and behavior description below are retained for historical reference only; the path-based rules above describe current behavior.
 
 ```yaml
 services:
@@ -190,7 +194,7 @@ security:
   enabled: true
 ```
 
-`security.enabled` acts as the master toggle for gateway authentication. When it is `false`, the JWT gateway filter is disabled and NexusGate does not enforce token checks for protected routes. This is the top-level control for turning the security layer on or off.
+`security.enabled` acts as the master toggle for Gateway authentication. When it is `false`, neither the JWT nor API-key authentication filter is attached to configured routes. This is the top-level control for turning the security layer on or off.
 
 ### JWT verification toggle
 
@@ -201,6 +205,10 @@ security:
 ```
 
 `security.jwt.enabled` is a narrower toggle for the JWT validation layer itself. It can be used to keep the configuration visible while temporarily disabling the actual verification behavior.
+
+### Internal API-key validation
+
+The Gateway calls the Management App's internal API-key validation endpoint reactively. Both processes must receive the same `NEXUSHUB_INTERNAL_SHARED_SECRET`; provide it through their environments, not in `nexus.yml` or source control. The Gateway's validation timeout defaults to two seconds and validation errors fail closed (`503`); invalid credentials return `401`, and a valid key without permission for the matched service returns `403`.
 
 ### Responsibility boundary
 

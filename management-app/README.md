@@ -2,7 +2,7 @@
 
 The Management App is the control-plane application in the NexusHub repository. It provides organization registration, user and authentication management, a registered-service catalog, and API-key lifecycle management. This document describes the implementation in this module as it currently exists; for the overall repository and Gateway documentation, see the [root README](../README.md).
 
-> **Integration status:** the Management App and the reactive Gateway are separate applications and are **not yet integrated**. Service records and API-key permissions stored here do not configure Gateway routes or cause the Gateway to validate those API keys.
+> **Integration status:** the Management App and reactive Gateway remain separate applications. The Gateway calls the Management App's shared-secret-protected internal API-key validation endpoint, but service records do not generate Gateway routes or select their target URIs. Dynamic route loading, target selection, and path rewriting are not implemented.
 
 ## Responsibilities and status
 
@@ -13,7 +13,7 @@ The Management App is a Spring MVC application using blocking JPA/PostgreSQL per
 | Organizations and users | Organization registration with an initial ADMIN; ADMIN can create/list organization users and enable or disable MEMBER accounts    | Organization administration endpoints beyond registration and no user deletion    |
 | Authentication          | Login, HS256 access JWT issuance, database-backed access-token authentication, refresh-token rotation and logout                   | SSO, MFA, or Gateway-to-management authentication exchange                        |
 | Registered services     | ADMIN registration, update, activation/deactivation; ADMIN and MEMBER organization-scoped reads                                    | Gateway route generation, outbound proxying, or SSRF-safe destination enforcement |
-| API keys                | ADMIN creation, list/detail, reversible activation, permanent revocation, expiry metadata, and service-scoped `INVOKE` permissions | Gateway API-key verification/enforcement, rate limits, or usage reporting         |
+| API keys                | ADMIN creation, list/detail, reversible activation, permanent revocation, expiry metadata, and service-scoped `INVOKE` permissions | Dynamic route selection, rate limits, or usage reporting                          |
 | Persistence             | Flyway-managed PostgreSQL schema                                                                                                   | Usage events, asynchronous processing, daily summaries, or date-range reports     |
 
 ## Technology and ports
@@ -779,6 +779,8 @@ Run these commands from the repository root on Windows:
 
 **Implemented in Management App:** organization registration; admin login and HS256 JWTs; database-backed user authentication and ADMIN/MEMBER management; refresh-token rotation/logout; tenant-scoped service registration, reads, configuration updates, and activation state; and API-key creation, safe metadata, service-scoped `INVOKE` permissions, expiry, activation/deactivation, and permanent revocation.
 
-**Known limitations:** management data is not consumed by Gateway routes or filters; API keys and service permissions are not enforced on traffic; registered-service URL validation is syntax-only; usage event ingestion, retries/deduplication, metrics aggregation, daily summaries, and reports are not part of the Management App. The checked-in Gateway and Management App JWT issuer/audience defaults differ, and integration/authorization semantics have not been verified end-to-end.
+**Known limitations:** Management service records do not drive Gateway route generation or outbound target selection. API-key checks are performed by the Gateway through the Management App's internal validation endpoint: the raw secret is matched to its stored hash, and key status/expiry, organization status, active same-organization services, and `INVOKE` permission are checked. The Gateway supplies the request path; the Management App resolves an eligible service among the key's persisted permissions, rather than accepting a caller-provided service or tenant ID. This is covered by automated Gateway and Management tests, but a live multi-process Gateway-to-Management integration has not been run. Registered-service URL validation remains syntax-only; usage event ingestion, retries/deduplication, metrics aggregation, daily summaries, and reports are not implemented here.
 
-**Future integration work:** agree and implement a service-configuration delivery model, Gateway API-key authentication and permission checks, consistent JWT configuration/identity semantics, and any usage/rate-limit/reporting pipeline. Update this guide after those behaviors exist and have integration tests; do not treat this planned work as current capability.
+**Internal endpoint configuration:** set the same high-entropy `NEXUSHUB_INTERNAL_SHARED_SECRET` in the Gateway and Management App environments. The internal validation endpoint rejects requests without the matching secret. Do not commit the value or use the placeholder in `.env.example` in a deployed environment.
+
+**Future integration work:** dynamic service-route/target resolution and any usage, reporting, or service-specific rate-limit pipeline remain separate work. The current Gateway keeps static route configuration and does not rewrite paths based on API-key validation results.

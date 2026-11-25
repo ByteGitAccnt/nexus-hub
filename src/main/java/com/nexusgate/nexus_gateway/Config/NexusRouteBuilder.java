@@ -31,25 +31,30 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
             String serviceName = entry.getKey();
             ServiceConfig service = entry.getValue();
-            // JWT authentication filter
+            ServiceConfig nexusHubService = config.getServices().get("nexus-hub");
+            if (config.getSecurity().isEnabled()
+                    && (nexusHubService == null
+                    || nexusHubService.getPath() == null
+                    || nexusHubService.getPath().isBlank()
+                    || nexusHubService.getUrl() == null
+                    || nexusHubService.getUrl().isBlank())) {
+                throw new IllegalStateException(
+                        "The nexus-hub service path and URL must be configured when gateway security is enabled");
+            }
+            String nexusHubPath = nexusHubService == null ? null : nexusHubService.getPath();
+            List<String> publicEndpoints = nexusHubService == null
+                    ? List.of()
+                    : nexusHubService.getPublicEndpoints();
+
             FilterDefinition jwtFilter = null;
             if (config.getSecurity().isEnabled()) {
                 jwtFilter = new FilterDefinition();
-                jwtFilter.setName("JwtAuthentication");// part of naming convention
-
-                // convert the public endpoints to list and feed to the filter args
+                jwtFilter.setName("JwtAuthentication");
                 Map<String, String> args = new HashMap<>();
-
-                List<String> publicEndpoints = service.getPublicEndpoints();
-
                 if (publicEndpoints != null && !publicEndpoints.isEmpty()) {
                     args.put("publicEndpoints", String.join(",", publicEndpoints));
                 }
-                args.put("servicePath", String.join(",", service.getPath().replace("/**", "")));
-                args.put("authMode", (service.getAuthMode() == null
-                        ? ServiceAuthMode.JWT
-                        : service.getAuthMode()).name());
-                // feeding the identity claim , auth mode to the jwt filter
+                args.put("nexusHubPath", nexusHubPath);
                 String identityClaim = config.getSecurity()
                         .getJwt()
                         .getIdentityClaim();
@@ -61,15 +66,11 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                 jwtFilter.setArgs(args);
             }
             FilterDefinition apiKeyFilter = null;
-            if (config.getSecurity().isEnabled() && service.getAuthMode() == ServiceAuthMode.API_KEY) {
+            if (config.getSecurity().isEnabled()) {
                 apiKeyFilter = new FilterDefinition();
                 apiKeyFilter.setName("ApiKeyAuthentication");
                 Map<String, String> args = new HashMap<>();
-                List<String> publicEndpoints = service.getPublicEndpoints();
-                if (publicEndpoints != null && !publicEndpoints.isEmpty()) {
-                    args.put("publicEndpoints", String.join(",", publicEndpoints));
-                }
-                args.put("servicePath", service.getPath().replace("/**", ""));
+                args.put("nexusHubPath", nexusHubPath);
                 apiKeyFilter.setArgs(args);
             }
             // inner rate limiter filter

@@ -1,6 +1,5 @@
 package com.nexusgate.management.security;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,58 +11,58 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 public class ManagementSecurityConfiguration {
 
-    @Bean
-    SecurityFilterChain managementSecurityFilterChain(
-            HttpSecurity http,
-            JwtAuthenticationFilter jwtAuthenticationFilter,
-            InternalServiceAuthFilter internalServiceAuthFilter) throws Exception {
-        return http
-                .csrf(csrf -> csrf.disable())
-                .formLogin(form -> form.disable())
-                .httpBasic(basic -> basic.disable())
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .exceptionHandling(exceptions -> exceptions
-                        .authenticationEntryPoint((request, response, exception) -> response
-                                .setStatus(401))
-                        .accessDeniedHandler((request, response, exception) -> response
-                                .setStatus(403)))
-                .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers(
-                                "/v3/api-docs",
-                                "/v3/api-docs/**",
-                                "/swagger-ui.html",
-                                "/swagger-ui/**")
-                        .permitAll()
-                        .requestMatchers(HttpMethod.GET, "/actuator/health")
-                        .permitAll()
-                        .requestMatchers(
-                                "/api/v1/organizations/register",
-                                "/api/v1/auth/login",
-                                "/api/v1/auth/refresh")
-                        .permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/users").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/users/*/status")
-                        .hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/services").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/services/*").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/status")
-                        .hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/services",
-                                "/api/v1/services/*")
-                        .hasAnyRole("ADMIN", "MEMBER")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/api-keys/internal/validate")
-                        .permitAll()
-                        .requestMatchers("/api/v1/api-keys", "/api/v1/api-keys/**")
-                        .hasRole("ADMIN")
-                        .anyRequest().authenticated())
-                .addFilterBefore(
-                        internalServiceAuthFilter,
-                        UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(
-                        jwtAuthenticationFilter,
-                        UsernamePasswordAuthenticationFilter.class)
-                .build();
-    }
+        @Bean
+        SecurityFilterChain managementSecurityFilterChain(
+                        HttpSecurity http,
+                        JwtAuthenticationFilter jwtAuthenticationFilter,
+                        InternalServiceAuthFilter internalServiceAuthFilter) throws Exception {
+                return http
+                                .csrf(csrf -> csrf.disable())
+                                .formLogin(form -> form.disable())
+                                .httpBasic(basic -> basic.disable())
+                                .sessionManagement(session -> session
+                                                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                                .exceptionHandling(exceptions -> exceptions
+                                                .authenticationEntryPoint((request, response, exception) -> response
+                                                                .setStatus(401))
+                                                .accessDeniedHandler((request, response, exception) -> response
+                                                                .setStatus(403)))
+                                .authorizeHttpRequests(authorize -> authorize
+                                                .requestMatchers(
+                                                                "/v3/api-docs",
+                                                                "/v3/api-docs/**",
+                                                                "/swagger-ui.html",
+                                                                "/swagger-ui/**")
+                                                .permitAll()
+                                                .requestMatchers(HttpMethod.GET, "/actuator/health")
+                                                .permitAll()
+                                                .requestMatchers(
+                                                                "/api/v1/organizations/register",
+                                                                "/api/v1/auth/login",
+                                                                "/api/v1/auth/refresh")
+                                                .permitAll()
+                                                .requestMatchers(HttpMethod.POST, "/api/v1/users").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.GET, "/api/v1/users").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/v1/users/*/status")
+                                                .hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.POST, "/api/v1/services").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PUT, "/api/v1/services/*").hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.PATCH, "/api/v1/services/*/status")
+                                                .hasRole("ADMIN")
+                                                .requestMatchers(HttpMethod.GET, "/api/v1/services",
+                                                                "/api/v1/services/*")
+                                                .hasAnyRole("ADMIN", "MEMBER")
+                                                .requestMatchers(HttpMethod.POST, "/api/v1/api-keys/internal/validate")
+                                                .permitAll()
+                                                .requestMatchers("/api/v1/api-keys", "/api/v1/api-keys/**")
+                                                .hasRole("ADMIN")
+                                                .anyRequest().authenticated())
+                                .addFilterBefore(
+                                                internalServiceAuthFilter,
+                                                UsernamePasswordAuthenticationFilter.class)
+                                .addFilterBefore(
+                                                jwtAuthenticationFilter,
+                                                UsernamePasswordAuthenticationFilter.class)
+                                .build();
+        }
 }
