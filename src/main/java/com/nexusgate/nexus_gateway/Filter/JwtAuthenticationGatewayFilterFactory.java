@@ -1,6 +1,7 @@
 package com.nexusgate.nexus_gateway.Filter;
 
 import com.nexusgate.nexus_gateway.Config.NexusConfig;
+import com.nexusgate.nexus_gateway.Config.GatewayPathMatcher;
 import com.nexusgate.nexus_gateway.Config.Security.JwtTokenVerifier;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -19,7 +20,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 
 import java.util.List;
-import java.util.Locale;
 
 @Component
 @ConditionalOnProperty(
@@ -45,42 +45,19 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
         GatewayFilter filter =  (exchange, chain) -> {
 
             String requestPath = exchange.getRequest().getPath().value();
-            List<String> publicEndpoints =
-                    config.getPublicEndpoints() == null
-                            ? List.of()
-                            : config.getPublicEndpoints();
-            String relativePath = requestPath.startsWith(config.getServicePath())
-                    ? requestPath.substring(config.getServicePath().length())
-                    : requestPath;
-
-            boolean isPublic = publicEndpoints.stream()
-                    .anyMatch(relativePath::equals);
-
-//            String authMode = config.getAuthMode() == null
-//                    ? "JWT"
-//                    : config.getAuthMode().toUpperCase(Locale.ROOT);
-//            //exchange.getAttributes().put("authMode", authMode);
-//            if (!List.of("JWT", "API_KEY", "PUBLIC").contains(authMode)) {
-//                return reject(exchange, "unsupported_auth_mode");
-//            }
+            if (!GatewayPathMatcher.matchesPathOrDescendant(requestPath, config.getNexusHubPath())) {
+                return chain.filter(exchange);
+            }
 
             String authHeader = exchange.getRequest()
                     .getHeaders()
                     .getFirst("Authorization");
-            // api-key comes as a header, so we need to check for it separately
-            // not with Authorization: X-API-Key <access-token> but X-API-Key: ng_live_<secret>
-            String apiKeyHeader = exchange.getRequest()
-                    .getHeaders()
-                    .getFirst("X-API-Key");
-            boolean hasJwt = authHeader != null && !authHeader.isBlank();
-            boolean hasApiKey = apiKeyHeader != null && !apiKeyHeader.isBlank();
+            boolean isPublic = GatewayPathMatcher.matchesPublicEndpoint(
+                    requestPath,
+                    config.getNexusHubPath(),
+                    config.getPublicEndpoints());
 
-
-            if (hasApiKey) {
-                exchange.getAttributes().put("authMode", "API_KEY");
-                return chain.filter(exchange);
-            }
-            if (!hasJwt) {
+            if (authHeader == null || authHeader.isBlank()) {
                 if (isPublic) {
                     exchange.getAttributes().put("authMode", "PUBLIC");
                     return chain.filter(exchange);
@@ -146,8 +123,7 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
     @Setter
     public static class Config {
         private List<String> publicEndpoints;
-        private String servicePath;
+        private String nexusHubPath;
         private String identityClaim;
-        private String authMode;
     }
 }

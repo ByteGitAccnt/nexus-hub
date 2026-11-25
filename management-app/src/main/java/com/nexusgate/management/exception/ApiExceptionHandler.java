@@ -41,6 +41,16 @@ public class ApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler(InvalidApiKeyException.class)
+    ProblemDetail handleInvalidApiKey(InvalidApiKeyException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, "Invalid API key");
+    }
+
+    @ExceptionHandler(ApiKeyPermissionDeniedException.class)
+    ProblemDetail handleApiKeyPermissionDenied(ApiKeyPermissionDeniedException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "API key is not authorized for this service");
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ProblemDetail handleAccessDenied(AccessDeniedException exception) {
         return ProblemDetail.forStatusAndDetail(

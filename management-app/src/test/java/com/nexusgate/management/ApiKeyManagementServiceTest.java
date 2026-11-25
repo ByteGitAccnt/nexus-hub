@@ -26,7 +26,6 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class ApiKeyManagementServiceTest {
-    private static final int LOOKUP_RANDOM_LENGTH = 12;
     private static final String SECRET_PREFIX = "ng_live_";
     @Mock
     private ApiKeyRepository apiKeyRepository;
@@ -43,7 +42,7 @@ class ApiKeyManagementServiceTest {
 
     @Test
     void internalValidationValidateApiKeyService() throws Exception {
-        String apiKey = "ng_live_test-secret";
+        String apiKey = SECRET_PREFIX + "A".repeat(43);
         Method hashSecretMethod = ApiKeyManagementService.class
                 .getDeclaredMethod("hashSecret", String.class);
         hashSecretMethod.setAccessible(true);
@@ -59,19 +58,14 @@ class ApiKeyManagementServiceTest {
         given(key.getId()).willReturn(apiKeyId);
         given(key.getOrganization()).willReturn(organization);
         given(organization.getId()).willReturn(organizationId);
+        given(organization.getStatus()).willReturn(OrganizationStatus.ACTIVE);
         given(key.getStatus()).willReturn(ApiKeyStatus.ACTIVE);
         given(key.getRevokedAt()).willReturn(null);
         given(key.getExpiresAt()).willReturn(null);
         given(key.getKeyHash()).willReturn(hashedSecret);
 
 
-        String lookupPrefix = hashedSecret.substring(
-                0,
-                Math.min(
-                        hashedSecret.length(),
-                        LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()
-                )
-        );
+        String lookupPrefix = apiKey.substring(0, SECRET_PREFIX.length() + 12);
 
         given(apiKeyRepository.findByLookupPrefix(lookupPrefix))
                 .willReturn(Optional.of(key));
@@ -100,14 +94,15 @@ class ApiKeyManagementServiceTest {
         )).willReturn(List.of(service));
 
         // Act
-        ValidationResult result = apiKeyManagementService.validate(apiKey ,lookupPrefix ,"/api/v1" );
+        ValidationResult result = apiKeyManagementService.validate(apiKey, "/api/v1");
 
         // Assert
         assertTrue(result.valid());
+        assertEquals(apiKeyId, result.apiKeyId());
         assertEquals(organizationId, result.organizationId());
 
 
-        ValidServiceDetails actual = result.services();
+        ValidServiceDetails actual = result.service();
 
         assertEquals(serviceId,actual.serviceId());
         assertEquals("User Service", actual.serviceName());
@@ -134,27 +129,21 @@ class ApiKeyManagementServiceTest {
 
     @Test
     void validate_shouldRejectUnknownApiKey() throws Exception {
-        String apiKey = "ng_live_test-secret";
+        String apiKey = SECRET_PREFIX + "A".repeat(43);
         Method hashSecretMethod = ApiKeyManagementService.class
                 .getDeclaredMethod("hashSecret", String.class);
         hashSecretMethod.setAccessible(true);
         String hashedSecret = (String) hashSecretMethod.invoke(apiKeyManagementService, apiKey);
 
 
-        String lookupPrefix = hashedSecret.substring(
-                0,
-                Math.min(
-                        hashedSecret.length(),
-                        LOOKUP_RANDOM_LENGTH + SECRET_PREFIX.length()
-                )
-        );
+        String lookupPrefix = apiKey.substring(0, SECRET_PREFIX.length() + 12);
 
         given(apiKeyRepository.findByLookupPrefix(lookupPrefix))
                 .willReturn(Optional.empty());
 
         assertThrows(
                 InvalidApiKeyException.class,
-                () -> apiKeyManagementService.validate(apiKey , lookupPrefix , "/api/v1")
+                () -> apiKeyManagementService.validate(apiKey, "/api/v1")
         );
 
         then(permissionRepository).shouldHaveNoInteractions();
