@@ -8,6 +8,8 @@ import io.jsonwebtoken.JwtException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.OrderedGatewayFilter;
@@ -21,19 +23,18 @@ import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 
 import java.util.List;
 
+@Slf4j
 @Component
-@ConditionalOnProperty(
-        name = "security.enabled",
-        havingValue = "true"
-)
-public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilterFactory<JwtAuthenticationGatewayFilterFactory.Config> {
+@ConditionalOnProperty(name = "security.enabled", havingValue = "true")
+public class JwtAuthenticationGatewayFilterFactory
+        extends AbstractGatewayFilterFactory<JwtAuthenticationGatewayFilterFactory.Config> {
 
     private final NexusConfig nexusConfig;
     private final JwtTokenVerifier tokenVerifier;
     private final MeterRegistry meterRegistry;
 
-
-    public JwtAuthenticationGatewayFilterFactory(NexusConfig nexusConfig, JwtTokenVerifier tokenVerifier, MeterRegistry meterRegistry) {
+    public JwtAuthenticationGatewayFilterFactory(NexusConfig nexusConfig, JwtTokenVerifier tokenVerifier,
+            MeterRegistry meterRegistry) {
         super(Config.class);
         this.nexusConfig = nexusConfig;
         this.tokenVerifier = tokenVerifier;
@@ -42,10 +43,12 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
 
     @Override
     public GatewayFilter apply(Config config) {
-        GatewayFilter filter =  (exchange, chain) -> {
+        GatewayFilter filter = (exchange, chain) -> {
 
             String requestPath = exchange.getRequest().getPath().value();
+            log.atInfo().log("request arrived : {}\n", requestPath);
             if (!GatewayPathMatcher.matchesPathOrDescendant(requestPath, config.getNexusHubPath())) {
+                log.atInfo().log("request arrived and skipped: {}\n", requestPath);
                 return chain.filter(exchange);
             }
 
@@ -81,37 +84,33 @@ public class JwtAuthenticationGatewayFilterFactory extends AbstractGatewayFilter
                     return reject(exchange, "identity_missing");
                 }
                 // Authentication will be established here.
-                Authentication authentication =
-                        new UsernamePasswordAuthenticationToken(
-                                identity,
-                                null,
-                                List.of()
-                        );
+                Authentication authentication = new UsernamePasswordAuthenticationToken(
+                        identity,
+                        null,
+                        List.of());
                 // Propagate verified principle downstream
                 ServerHttpRequest request = exchange.getRequest().mutate()
                         .headers(headers -> headers.remove("X-Principal"))
-                        .header("X-Principal",  String.valueOf(identity))
+                        .header("X-Principal", String.valueOf(identity))
                         .build();
                 exchange = exchange.mutate().request(request).build();
 
                 return chain.filter(exchange)
                         .contextWrite(
                                 ReactiveSecurityContextHolder.withAuthentication(
-                                        authentication
-                                )
-                        );
+                                        authentication));
             } catch (JwtException | IllegalArgumentException e) {
                 return reject(exchange, "invalid_token");
             }
         };
-        //default order is -100, so we set it to -90 to ensure it runs after the default filters
+        // default order is -100, so we set it to -90 to ensure it runs after the
+        // default filters
         return new OrderedGatewayFilter(filter, -90);
     }
 
     private reactor.core.publisher.Mono<Void> reject(
             org.springframework.web.server.ServerWebExchange exchange,
-            String reason
-    ) {
+            String reason) {
         if (nexusConfig.getMonitoring().isEnabled()) {
             meterRegistry.counter("nexusgate.auth.failures", "reason", reason).increment();
         }

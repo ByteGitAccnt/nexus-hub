@@ -1,11 +1,15 @@
 package com.nexusgate.nexus_gateway.Filter;
 
 import com.nexusgate.nexus_gateway.Config.NexusConfig;
+import com.nexusgate.nexus_gateway.Config.GatewayExchangeAttributes;
 import com.nexusgate.nexus_gateway.Config.RateLimit.RateLimitKeyGenerator;
 import com.nexusgate.nexus_gateway.Config.RateLimit.RateLimitPolicy;
 import com.nexusgate.nexus_gateway.Config.RateLimit.RateLimitResult;
 import com.nexusgate.nexus_gateway.Config.RateLimit.RedisTokenBucket;
+import com.nexusgate.nexus_gateway.Dto.ValidationResult;
 import io.micrometer.core.instrument.MeterRegistry;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -18,12 +22,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @Component
-@ConditionalOnProperty(
-        name = "rateLimit.enabled",
-        havingValue = "true"
-)
-public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFactory<Object> {
+@ConditionalOnProperty(name = "rateLimit.enabled", havingValue = "true")
+public class InnerRateLimitGatewayFilterFactory extends AbstractGatewayFilterFactory<Object> {
 
     private final RateLimitKeyGenerator keyGenerator;
     private final RedisTokenBucket tokenBucket;
@@ -31,7 +33,7 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
     private final MeterRegistry meterRegistry;
 
     public InnerRateLimitGatewayFilterFactory(RateLimitKeyGenerator keyGenerator, RedisTokenBucket tokenBucket,
-                                              NexusConfig nexusConfig, MeterRegistry meterRegistry) {
+            NexusConfig nexusConfig, MeterRegistry meterRegistry) {
         super(Object.class);
         this.keyGenerator = keyGenerator;
         this.tokenBucket = tokenBucket;
@@ -40,10 +42,10 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
     }
 
     @Override
-    public GatewayFilter apply(Object config){
-        GatewayFilter filter =  (exchange , chain) -> {
-
-            if(!nexusConfig.getRateLimit().isEnabled()){
+    public GatewayFilter apply(Object config) {
+        GatewayFilter filter = (exchange, chain) -> {
+            log.atInfo().log("rate limitng the request {}", exchange.getRequest().getPath());
+            if (!nexusConfig.getRateLimit().isEnabled()) {
                 return chain.filter(exchange);
             }
             RateLimitPolicy policy = nexusConfig.getRateLimit().getInner();
@@ -51,7 +53,7 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
             if (!policy.isEnabled()) {
                 return chain.filter(exchange);
             }
-            String authMode = exchange.getAttribute("authMode");
+            String authMode = exchange.getAttribute(GatewayExchangeAttributes.AUTH_MODE);
 
             if ("API_KEY".equals(authMode)) {
                 return handleApiKeyRequest(exchange, chain, policy);
@@ -62,58 +64,59 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
 
                         if (!hasContext) {// If there is no security context, treat the request as unauthenticated
                             return chain.filter(exchange);
-                            //so no need rate limiting
+                            // so no need rate limiting
                         }
 
                         return ReactiveSecurityContextHolder.getContext()
                                 .map(context -> context.getAuthentication())
                                 .filter(Authentication::isAuthenticated)
-                                .flatMap(authentication ->
-                                        handleAuthenticatedRequest(
-                                                authentication,
-                                                exchange,
-                                                chain,
-                                                policy
-                                        )
-                                ) ;
+                                .flatMap(authentication -> handleAuthenticatedRequest(
+                                        authentication,
+                                        exchange,
+                                        chain,
+                                        policy));
                     });
         };
-        // determine the order of the filter, -80 is chosen to ensure it runs before most other filters
+        // determine the order of the filter, -80 is chosen to ensure it runs before
+        // most other filters
         return new OrderedGatewayFilter(filter, -80);
     }
 
-    private Mono<Void> handleAuthenticatedRequest(Authentication authentication , ServerWebExchange exchange, GatewayFilterChain chain, RateLimitPolicy policy) {
+    private Mono<Void> handleAuthenticatedRequest(Authentication authentication, ServerWebExchange exchange,
+            GatewayFilterChain chain, RateLimitPolicy policy) {
         String userId = authentication.getName();
         String bucketKey = keyGenerator.forUser(userId);
-        return tokenBucket.consume(bucketKey , policy)
-                .flatMap(result -> handleResult(exchange , chain , policy, result))
-                .onErrorResume(error ->
-                    handleRedisFailure(
+        return tokenBucket.consume(bucketKey, policy)
+                .flatMap(result -> handleResult(exchange, chain, policy, result))
+                .onErrorResume(error -> handleRedisFailure(
                         exchange,
-                        chain
-                    )
-        );
+                        chain));
     }
-    private Mono<Void> handleApiKeyRequest(ServerWebExchange exchange, GatewayFilterChain chain, RateLimitPolicy policy) {
-        String organizationId = exchange.getAttribute("organizationId");
-        String serviceId = exchange.getAttribute("serviceId");
 
-        if (organizationId == null || serviceId == null) {
+    private Mono<Void> handleApiKeyRequest(ServerWebExchange exchange, GatewayFilterChain chain,
+            RateLimitPolicy policy) {
+        ValidationResult validationResult = exchange.getAttribute(
+                GatewayExchangeAttributes.API_KEY_VALIDATION_RESULT);
+        if (validationResult == null || !validationResult.valid()
+                || validationResult.organizationId() == null
+                || validationResult.service() == null
+                || validationResult.service().serviceId() == null) {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
 
+        String organizationId = validationResult.organizationId().toString();
+        String serviceId = validationResult.service().serviceId().toString();
         String bucketKey = keyGenerator.forApiKey(organizationId, serviceId);
         return tokenBucket.consume(bucketKey, policy)
                 .flatMap(result -> handleResult(exchange, chain, policy, result))
-                .onErrorResume(error ->
-                        handleRedisFailure(
-                                exchange,
-                                chain
-                        )
-                );
+                .onErrorResume(error -> handleRedisFailure(
+                        exchange,
+                        chain));
     }
-    private Mono<Void> handleResult(ServerWebExchange exchange , GatewayFilterChain chain, RateLimitPolicy policy, RateLimitResult result) {
+
+    private Mono<Void> handleResult(ServerWebExchange exchange, GatewayFilterChain chain, RateLimitPolicy policy,
+            RateLimitResult result) {
         exchange.getResponse()
                 .getHeaders()
                 .set("X-RateLimit-Limit", String.valueOf(policy.getCapacity()));
@@ -121,13 +124,12 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
                 .getHeaders()
                 .set("X-RateLimit-Remaining", String.valueOf(result.remaining()));
 
-        if(!result.allowed()){
-            if(nexusConfig.getMonitoring().isEnabled()) {
+        if (!result.allowed()) {
+            if (nexusConfig.getMonitoring().isEnabled()) {
                 meterRegistry.counter(
                         "nexusgate.rate_limit.rejections",
                         "limiter", "inner",
-                        "reason", "limit_exceeded"
-                ).increment();
+                        "reason", "limit_exceeded").increment();
             }
             exchange.getResponse()
                     .getHeaders()
@@ -138,19 +140,21 @@ public class InnerRateLimitGatewayFilterFactory  extends AbstractGatewayFilterFa
         }
         return chain.filter(exchange);
     }
+
     private Mono<Void> handleRedisFailure(ServerWebExchange exchange, GatewayFilterChain chain) {
         String strategy = nexusConfig.getRateLimit().getRedisFailureStrategy();
-        //if strategy is fail open , then we allow request to pass without causing an error! we chose availability over security
-        //if fail-closed then we chose security over availability and the request will be rejected
-        if("fail-open".equalsIgnoreCase(strategy)){
+        // if strategy is fail open , then we allow request to pass without causing an
+        // error! we chose availability over security
+        // if fail-closed then we chose security over availability and the request will
+        // be rejected
+        if ("fail-open".equalsIgnoreCase(strategy)) {
             return chain.filter(exchange);
         }
-        if(nexusConfig.getMonitoring().isEnabled()) {
+        if (nexusConfig.getMonitoring().isEnabled()) {
             meterRegistry.counter(
                     "nexusgate.rate_limit.rejections",
                     "limiter", "inner",
-                    "reason", "redis_failure"
-            ).increment();
+                    "reason", "redis_failure").increment();
         }
         exchange.getResponse()
                 .setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);

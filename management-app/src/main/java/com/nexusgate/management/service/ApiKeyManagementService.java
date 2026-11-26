@@ -146,18 +146,16 @@ public class ApiKeyManagementService {
             throw new InvalidApiKeyException("Invalid or expired api key");
         }
 
-        List<UUID> serviceIds = permissionRepository.findServiceIdsByApiKeyIdAndPermission(key.getId(), ApiKeyPermissionType.INVOKE);
+        List<UUID> serviceIds = permissionRepository.findServiceIdsByApiKeyIdAndPermission(key.getId(),
+                ApiKeyPermissionType.INVOKE);
         List<RegisteredService> services = serviceRepository.findEligibleForApiKey(
-                serviceIds ,
+                serviceIds,
                 key.getOrganization().getId(),
                 ServiceAuthMode.API_KEY);
         RegisteredService matchedService = services.stream()
-                .filter(service ->
-                        matchesBasePath(reqPath, service.getBasePath()))
-                .max(Comparator.comparingInt(service ->
-                        normalizePath(service.getBasePath()).length()))
+                .filter(service -> matchesBasePath(reqPath, service.getBasePath()))
+                .max(Comparator.comparingInt(service -> normalizePath(service.getBasePath()).length()))
                 .orElse(null);
-
         if (matchedService == null) {
             throw new ApiKeyPermissionDeniedException();
         }
@@ -166,16 +164,14 @@ public class ApiKeyManagementService {
                 matchedService.getName(),
                 matchedService.getTargetUrl(),
                 matchedService.getBasePath(),
-                matchedService.getTargetPath()
-        );
-
+                matchedService.getTargetPath());
         return new ValidationResult(
                 true,
                 key.getId(),
                 key.getOrganization().getId(),
-                serviceDetails
-        );
+                serviceDetails);
     }
+
     private boolean matchesBasePath(String requestPath, String basePath) {
         String path = normalizePath(requestPath);
         String base = normalizePath(basePath);
@@ -194,6 +190,7 @@ public class ApiKeyManagementService {
 
         return path;
     }
+
     private Organization requireActiveAdminOrganization(UUID actorUserId) {
         User actor = userRepository.findById(actorUserId)
                 .orElseThrow(() -> new AccessDeniedException("Active organization administrator required"));
@@ -271,6 +268,7 @@ public class ApiKeyManagementService {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
     }
+
     private static void verifyLookupToHashKey(String secret, String key) {
         if (!MessageDigest.isEqual(
                 secret.getBytes(StandardCharsets.US_ASCII),
@@ -278,6 +276,7 @@ public class ApiKeyManagementService {
             throw new InvalidApiKeyException("Invalid API key");
         }
     }
+
     private record GeneratedSecret(String secret, String lookupPrefix) {
     }
 }

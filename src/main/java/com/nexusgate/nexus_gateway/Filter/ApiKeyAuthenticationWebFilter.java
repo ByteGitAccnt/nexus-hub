@@ -1,20 +1,16 @@
 package com.nexusgate.nexus_gateway.Filter;
 
 import com.nexusgate.nexus_gateway.Config.GatewayPathMatcher;
+import com.nexusgate.nexus_gateway.Config.GatewayExchangeAttributes;
 import com.nexusgate.nexus_gateway.Config.NexusConfig;
 import com.nexusgate.nexus_gateway.Dto.ValidationRequest;
 import com.nexusgate.nexus_gateway.Dto.ValidationResult;
-import lombok.Getter;
-import lombok.Setter;
+
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.cloud.gateway.filter.GatewayFilter;
-import org.springframework.cloud.gateway.filter.GatewayFilterChain;
-import org.springframework.cloud.gateway.filter.OrderedGatewayFilter;
-import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
+import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -24,6 +20,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
@@ -33,88 +31,77 @@ import java.util.List;
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "security.enabled", havingValue = "true")
-public class ApiKeyAuthenticationGatewayFilterFactory
-        extends AbstractGatewayFilterFactory<ApiKeyAuthenticationGatewayFilterFactory.Config> {
+public class ApiKeyAuthenticationWebFilter implements WebFilter, Ordered {
 
     private static final String VALIDATION_PATH = "api/v1/api-keys/internal/validate";
+    private static final int ORDER = -90;
 
     private final NexusConfig nexusConfig;
     private final WebClient webClient;
     private final String internalSecret;
     private final Duration validationTimeout;
 
-    @Autowired
-    public ApiKeyAuthenticationGatewayFilterFactory(
+    public ApiKeyAuthenticationWebFilter(
             NexusConfig nexusConfig,
             WebClient webClient,
             @Value("${nexushub.internal.shared-secret}") String internalSecret,
             @Value("${nexushub.internal.validation-timeout:PT2S}") Duration validationTimeout) {
-        this(nexusConfig, webClient, internalSecret, validationTimeout, true);
-    }
-
-    ApiKeyAuthenticationGatewayFilterFactory(
-            NexusConfig nexusConfig,
-            WebClient webClient,
-            String internalSecret,
-            Duration validationTimeout,
-            boolean validateConfiguration) {
-        super(Config.class);
         this.nexusConfig = nexusConfig;
         this.webClient = webClient;
         this.internalSecret = internalSecret;
         this.validationTimeout = validationTimeout;
-        if (validateConfiguration && (internalSecret == null || internalSecret.isBlank())) {
+        if (internalSecret == null || internalSecret.isBlank()) {
             throw new IllegalStateException("Internal API-key validation secret must be configured");
         }
     }
 
     @Override
-    public GatewayFilter apply(Config config) {
-        GatewayFilter filter = (exchange, chain) -> {
-            String requestPath = exchange.getRequest().getPath().value();
-            if (GatewayPathMatcher.matchesPathOrDescendant(requestPath, config.getNexusHubPath())) {
-                return chain.filter(exchange);
-            }
+    public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+        String requestPath = exchange.getRequest().getPath().value();
+        var managementService = nexusConfig.getServices() == null
+                ? null
+                : nexusConfig.getServices().get("nexus-hub");
+        String nexusHubPath = managementService == null ? null : managementService.getPath();
+        if (GatewayPathMatcher.matchesPathOrDescendant(requestPath, nexusHubPath)) {
+            return chain.filter(exchange);
+        }
 
-            String apiKey = exchange.getRequest().getHeaders().getFirst("X-API-Key");
-            if (apiKey == null || apiKey.isBlank()) {
-                return reject(exchange, HttpStatus.UNAUTHORIZED);
-            }
+        String apiKey = exchange.getRequest().getHeaders().getFirst("X-API-Key");
+        if (apiKey == null || apiKey.isBlank()) {
+            return reject(exchange, HttpStatus.UNAUTHORIZED);
+        }
 
-            URI validationUri;
-            try {
-                var managementService = nexusConfig.getServices().get("nexus-hub");
-                if (managementService == null || managementService.getUrl() == null
-                        || managementService.getUrl().isBlank()) {
-                    return reject(exchange, HttpStatus.SERVICE_UNAVAILABLE);
-                }
-                String baseUrl = managementService.getUrl().endsWith("/")
-                        ? managementService.getUrl()
-                        : managementService.getUrl() + "/";
-                validationUri = URI.create(baseUrl).resolve(VALIDATION_PATH);
-            } catch (RuntimeException exception) {
+        URI validationUri;
+        try {
+            if (managementService == null || managementService.getUrl() == null
+                    || managementService.getUrl().isBlank()) {
                 return reject(exchange, HttpStatus.SERVICE_UNAVAILABLE);
             }
+            String baseUrl = managementService.getUrl().endsWith("/")
+                    ? managementService.getUrl()
+                    : managementService.getUrl() + "/";
+            validationUri = URI.create(baseUrl).resolve(VALIDATION_PATH);
+        } catch (RuntimeException exception) {
+            return reject(exchange, HttpStatus.SERVICE_UNAVAILABLE);
+        }
 
-            return webClient.post()
-                    .uri(validationUri)
-                    .header("X-Internal-Secret", internalSecret)
-                    .bodyValue(new ValidationRequest(apiKey, requestPath))
-                    .retrieve()
-                    .bodyToMono(ValidationResult.class)
-                    .timeout(validationTimeout)
-                    .flatMap(result -> authorize(result, exchange, chain))
-                    .onErrorResume(WebClientResponseException.class,
-                            exception -> reject(exchange, statusFor(exception)))
-                    .onErrorResume(exception -> reject(exchange, HttpStatus.SERVICE_UNAVAILABLE));
-        };
-        return new OrderedGatewayFilter(filter, -85);
+        return webClient.post()
+                .uri(validationUri)
+                .header("X-Internal-Secret", internalSecret)
+                .bodyValue(new ValidationRequest(apiKey, requestPath))
+                .retrieve()
+                .bodyToMono(ValidationResult.class)
+                .timeout(validationTimeout)
+                .flatMap(result -> authorize(result, exchange, chain))
+                .onErrorResume(WebClientResponseException.class,
+                        exception -> reject(exchange, statusFor(exception)))
+                .onErrorResume(exception -> reject(exchange, HttpStatus.SERVICE_UNAVAILABLE));
     }
 
     private Mono<Void> authorize(
             ValidationResult result,
             ServerWebExchange exchange,
-            GatewayFilterChain chain) {
+            WebFilterChain chain) {
         if (result == null || !result.valid()
                 || result.apiKeyId() == null
                 || result.organizationId() == null) {
@@ -127,9 +114,10 @@ public class ApiKeyAuthenticationGatewayFilterFactory
         String apiKeyId = result.apiKeyId().toString();
         String organizationId = result.organizationId().toString();
         String serviceId = result.service().serviceId().toString();
-        exchange.getAttributes().put("authMode", "API_KEY");
-        exchange.getAttributes().put("organizationId", organizationId);
-        exchange.getAttributes().put("serviceId", serviceId);
+        exchange.getAttributes().put(GatewayExchangeAttributes.API_KEY_VALIDATION_RESULT, result);
+        exchange.getAttributes().put(GatewayExchangeAttributes.AUTH_MODE, "API_KEY");
+        exchange.getAttributes().put(GatewayExchangeAttributes.ORGANIZATION_ID, organizationId);
+        exchange.getAttributes().put(GatewayExchangeAttributes.SERVICE_ID, serviceId);
 
         ServerHttpRequest authenticatedRequest = exchange.getRequest().mutate()
                 .headers(headers -> {
@@ -150,7 +138,7 @@ public class ApiKeyAuthenticationGatewayFilterFactory
                 "apikey:" + apiKeyId,
                 null,
                 List.of(new SimpleGrantedAuthority("ROLE_API_KEY")));
-        log.atInfo().log("Api authentication was suucess full {} {} {}", apiKeyId, organizationId, serviceId);
+        log.atInfo().log("Api key autherized {} {} {}", apiKeyId, serviceId, organizationId);
         return chain.filter(authenticatedExchange)
                 .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
     }
@@ -170,9 +158,8 @@ public class ApiKeyAuthenticationGatewayFilterFactory
         return exchange.getResponse().setComplete();
     }
 
-    @Getter
-    @Setter
-    public static class Config {
-        private String nexusHubPath;
+    @Override
+    public int getOrder() {
+        return ORDER;
     }
 }
