@@ -42,7 +42,7 @@ rateLimit:
     refillPeriodSeconds: 60
 
   inner:
-    enabled: false
+    enabled: true
     algorithm: token-bucket
     capacity: 60
     refillRate: 60
