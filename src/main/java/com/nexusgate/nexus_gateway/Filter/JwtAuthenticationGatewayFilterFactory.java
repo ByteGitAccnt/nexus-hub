@@ -8,7 +8,6 @@ import io.jsonwebtoken.JwtException;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.Getter;
 import lombok.Setter;
-import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
@@ -23,7 +22,6 @@ import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 
 import java.util.List;
 
-@Slf4j
 @Component
 @ConditionalOnProperty(name = "security.enabled", havingValue = "true")
 public class JwtAuthenticationGatewayFilterFactory
@@ -46,9 +44,7 @@ public class JwtAuthenticationGatewayFilterFactory
         GatewayFilter filter = (exchange, chain) -> {
 
             String requestPath = exchange.getRequest().getPath().value();
-            log.atInfo().log("request arrived : {}\n", requestPath);
             if (!GatewayPathMatcher.matchesPathOrDescendant(requestPath, config.getNexusHubPath())) {
-                log.atInfo().log("request arrived and skipped: {}\n", requestPath);
                 return chain.filter(exchange);
             }
 

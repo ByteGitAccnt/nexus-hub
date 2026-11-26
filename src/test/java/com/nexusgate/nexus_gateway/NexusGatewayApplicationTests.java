@@ -2,6 +2,7 @@ package com.nexusgate.nexus_gateway;
 
 import com.nexusgate.nexus_gateway.Config.GatewayExchangeAttributes;
 import com.nexusgate.nexus_gateway.Config.GatewayPathMatcher;
+import com.nexusgate.nexus_gateway.Config.BusinessRouteConfig;
 import com.nexusgate.nexus_gateway.Config.Monitoring.MonitoringConfig;
 import com.nexusgate.nexus_gateway.Config.NexusConfig;
 import com.nexusgate.nexus_gateway.Config.NexusRouteBuilder;
@@ -17,11 +18,13 @@ import com.nexusgate.nexus_gateway.Config.Security.SecurityConfig;
 import com.nexusgate.nexus_gateway.Config.ServiceConfig;
 import com.nexusgate.nexus_gateway.Config.Logging.LoggingConfig;
 import com.nexusgate.nexus_gateway.Dto.ValidationResult;
+import com.nexusgate.nexus_gateway.Dto.ValidServiceDetails;
 import com.nexusgate.nexus_gateway.Filter.ApiKeyAuthenticationWebFilter;
 import com.nexusgate.nexus_gateway.Filter.InnerRateLimitGatewayFilterFactory;
 import com.nexusgate.nexus_gateway.Filter.JwtAuthenticationGatewayFilterFactory;
 import com.nexusgate.nexus_gateway.Filter.OuterRateLimitWebFilter;
 import com.nexusgate.nexus_gateway.Filter.RequestLoggingWebFilter;
+import com.nexusgate.nexus_gateway.Filter.ValidatedPathRewriteGatewayFilterFactory;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -34,13 +37,17 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.route.Route;
 import org.springframework.cloud.gateway.route.RouteDefinition;
+import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.server.PathContainer;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.pattern.PathPatternParser;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
@@ -59,6 +66,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 
 class NexusGatewayApplicationTests {
@@ -207,21 +215,41 @@ class NexusGatewayApplicationTests {
     }
 
     @Test
-    void staticRoutesRemainConfiguredAndApiKeyValidationIsNotRepeatedAsRouteFilter() {
-        List<RouteDefinition> routes = new NexusRouteBuilder(routeConfig())
+    void managementRoutePrecedesFailClosedBusinessEntryRoute() {
+        NexusConfig config = routeConfig();
+        config.getRateLimit().setEnabled(true);
+        List<RouteDefinition> routes = new NexusRouteBuilder(config)
                 .getRouteDefinitions().collectList().block();
         assertNotNull(routes);
         RouteDefinition managementRoute = routes.stream()
                 .filter(route -> "nexus-hub".equals(route.getId()))
                 .findFirst().orElseThrow();
         RouteDefinition businessRoute = routes.stream()
-                .filter(route -> "orders".equals(route.getId()))
+                .filter(route -> "business-entry".equals(route.getId()))
                 .findFirst().orElseThrow();
 
-        assertEquals(List.of("JwtAuthentication", "StripPrefix"),
+        assertEquals(0, managementRoute.getOrder());
+        assertEquals(100, businessRoute.getOrder());
+        assertEquals("no", businessRoute.getUri().getScheme());
+        assertEquals("op", businessRoute.getUri().getHost());
+        assertEquals("/nexushub/**", managementRoute.getPredicates().get(0).getArgs().get("pattern"));
+        assertEquals("/**", businessRoute.getPredicates().get(0).getArgs().get("pattern"));
+        assertEquals(List.of("JwtAuthentication", "InnerRateLimit", "StripPrefix"),
                 managementRoute.getFilters().stream().map(filter -> filter.getName()).toList());
-        assertEquals(List.of("JwtAuthentication"),
+        assertEquals(List.of("InnerRateLimit", "ValidatedPathRewrite"),
                 businessRoute.getFilters().stream().map(filter -> filter.getName()).toList());
+
+        var pathParser = new PathPatternParser();
+        RouteDefinition selectedManagement = routes.stream()
+                .filter(route -> matches(route, "/nexushub/api/v1/auth/login", pathParser))
+                .min(java.util.Comparator.comparingInt(RouteDefinition::getOrder))
+                .orElseThrow();
+        assertEquals("nexus-hub", selectedManagement.getId());
+        RouteDefinition selectedBusiness = routes.stream()
+                .filter(route -> matches(route, "/authentication/auth_test", pathParser))
+                .min(java.util.Comparator.comparingInt(RouteDefinition::getOrder))
+                .orElseThrow();
+        assertEquals("business-entry", selectedBusiness.getId());
     }
 
     @Test
@@ -259,8 +287,156 @@ class NexusGatewayApplicationTests {
                 ORGANIZATION_ID.toString(), SERVICE_ID.toString()), bucketKey.getValue());
     }
 
+    @Test
+    void validatedRewriteNormalizesPathsPreservesQueryAndRejectsBadMetadata() {
+        ValidatedPathRewriteGatewayFilterFactory rewriteFactory =
+                new ValidatedPathRewriteGatewayFilterFactory();
+
+        assertRewrite(rewriteFactory, "/authentication", "authentication", "auth/api/v1",
+                "/auth/api/v1", null);
+        assertRewrite(rewriteFactory, "/authentication/auth_test?mode=full",
+                "/authentication/", "/auth/api/v1/", "/auth/api/v1/auth_test", "mode=full");
+        assertRewrite(rewriteFactory, "/authentication/nested/path?x=1&y=two",
+                "/authentication/", "auth/api/v1", "/auth/api/v1/nested/path", "x=1&y=two");
+        assertRewrite(rewriteFactory, "/authentication/auth_test",
+                "/authentication", "/auth/api/v1", "/auth/api/v1/auth_test", null);
+
+        MockServerWebExchange missingMetadata = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/authentication/auth_test").build());
+        AtomicInteger missingMetadataContinuation = new AtomicInteger();
+        rewriteFactory.apply(new Object()).filter(missingMetadata, exchange -> {
+            missingMetadataContinuation.incrementAndGet();
+            return Mono.empty();
+        }).block(Duration.ofSeconds(1));
+        assertEquals(HttpStatus.UNAUTHORIZED, missingMetadata.getResponse().getStatusCode());
+        assertEquals(0, missingMetadataContinuation.get());
+
+        MockServerWebExchange invalidServiceMetadata = authenticatedRewriteExchange(
+                "/authentication/auth_test", "/different-service", "/auth/api/v1");
+        AtomicInteger invalidMetadataContinuation = new AtomicInteger();
+        rewriteFactory.apply(new Object()).filter(invalidServiceMetadata, exchange -> {
+            invalidMetadataContinuation.incrementAndGet();
+            return Mono.empty();
+        }).block(Duration.ofSeconds(1));
+        assertEquals(HttpStatus.FORBIDDEN, invalidServiceMetadata.getResponse().getStatusCode());
+        assertEquals(0, invalidMetadataContinuation.get());
+    }
+
+    @Test
+    void authenticatedBusinessRouteConsumesInnerLimitThenRewritesWithoutForwarding() {
+        Harness harness = new Harness(Duration.ofSeconds(1));
+        harness.enqueueValidKey();
+        RateLimitPolicy innerPolicy = new RateLimitPolicy();
+        innerPolicy.setEnabled(true);
+        innerPolicy.setCapacity(10);
+        harness.config.getRateLimit().setEnabled(true);
+        harness.config.getRateLimit().setInner(innerPolicy);
+        RedisTokenBucket tokenBucket = mock(RedisTokenBucket.class);
+        given(tokenBucket.consume(anyString(), any(RateLimitPolicy.class)))
+                .willReturn(Mono.just(new RateLimitResult(true, 9, 0)));
+        InnerRateLimitGatewayFilterFactory inner = new InnerRateLimitGatewayFilterFactory(
+                new RateLimitKeyGenerator(), tokenBucket, harness.config, new SimpleMeterRegistry());
+        GatewayFilter innerFilter = inner.apply(new Object());
+        GatewayFilter rewriteFilter = new ValidatedPathRewriteGatewayFilterFactory().apply(new Object());
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/orders/invoices?id=5")
+                        .header("X-API-Key", "valid-key").build());
+        Route businessRoute = mock(Route.class);
+        given(businessRoute.getId()).willReturn("business-entry");
+        exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR, businessRoute);
+
+        harness.apiKeyFilter.filter(exchange, authorizedExchange ->
+                innerFilter.filter(authorizedExchange, rateLimitedExchange ->
+                        rewriteFilter.filter(rateLimitedExchange, rewrittenExchange -> {
+                            assertEquals("/auth/api/v1/invoices",
+                                    rewrittenExchange.getRequest().getPath().value());
+                            assertEquals("id=5", rewrittenExchange.getRequest().getURI().getRawQuery());
+                            rewrittenExchange.getResponse().setStatusCode(HttpStatus.NO_CONTENT);
+                            return rewrittenExchange.getResponse().setComplete();
+                        }))).block(Duration.ofSeconds(1));
+
+        assertEquals(HttpStatus.NO_CONTENT, exchange.getResponse().getStatusCode());
+        ArgumentCaptor<String> bucketKey = ArgumentCaptor.forClass(String.class);
+        verify(tokenBucket).consume(bucketKey.capture(), any(RateLimitPolicy.class));
+        assertEquals(new RateLimitKeyGenerator().forApiKey(
+                ORGANIZATION_ID.toString(), SERVICE_ID.toString()), bucketKey.getValue());
+        assertEquals(1, harness.managementRequestCount());
+    }
+
+    @Test
+    void businessEntryInnerLimiterRejectsMissingAuthenticationMetadata() {
+        Harness harness = new Harness(Duration.ofSeconds(1));
+        harness.config.getRateLimit().setEnabled(true);
+        RateLimitPolicy innerPolicy = new RateLimitPolicy();
+        innerPolicy.setEnabled(true);
+        harness.config.getRateLimit().setInner(innerPolicy);
+        RedisTokenBucket tokenBucket = mock(RedisTokenBucket.class);
+        InnerRateLimitGatewayFilterFactory inner = new InnerRateLimitGatewayFilterFactory(
+                new RateLimitKeyGenerator(), tokenBucket, harness.config, new SimpleMeterRegistry());
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/authentication/auth_test").build());
+        Route businessRoute = mock(Route.class);
+        given(businessRoute.getId()).willReturn("business-entry");
+        exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR, businessRoute);
+        AtomicInteger continuationCount = new AtomicInteger();
+
+        inner.apply(new Object()).filter(exchange, ignored -> {
+            continuationCount.incrementAndGet();
+            return Mono.empty();
+        }).block(Duration.ofSeconds(1));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, exchange.getResponse().getStatusCode());
+        assertEquals(0, continuationCount.get());
+        verifyNoInteractions(tokenBucket);
+    }
+
+    private static boolean matches(RouteDefinition route, String path, PathPatternParser parser) {
+        String pattern = route.getPredicates().get(0).getArgs().get("pattern");
+        return parser.parse(pattern).matches(PathContainer.parsePath(path));
+    }
+
+    private static void assertRewrite(
+            ValidatedPathRewriteGatewayFilterFactory factory,
+            String requestUri,
+            String basePath,
+            String targetPath,
+            String expectedPath,
+            String expectedQuery
+    ) {
+        MockServerWebExchange exchange = authenticatedRewriteExchange(requestUri, basePath, targetPath);
+        AtomicInteger continuationCount = new AtomicInteger();
+        factory.apply(new Object()).filter(exchange, rewrittenExchange -> {
+            continuationCount.incrementAndGet();
+            assertEquals(expectedPath, rewrittenExchange.getRequest().getPath().value());
+            assertEquals(expectedQuery, rewrittenExchange.getRequest().getURI().getRawQuery());
+            return Mono.empty();
+        }).block(Duration.ofSeconds(1));
+        assertEquals(1, continuationCount.get());
+    }
+
+    private static MockServerWebExchange authenticatedRewriteExchange(
+            String requestUri,
+            String basePath,
+            String targetPath
+    ) {
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get(requestUri).build());
+        exchange.getAttributes().put(GatewayExchangeAttributes.AUTH_MODE, "API_KEY");
+        exchange.getAttributes().put(GatewayExchangeAttributes.ORGANIZATION_ID, ORGANIZATION_ID.toString());
+        exchange.getAttributes().put(GatewayExchangeAttributes.SERVICE_ID, SERVICE_ID.toString());
+        exchange.getAttributes().put(GatewayExchangeAttributes.API_KEY_VALIDATION_RESULT,
+                new ValidationResult(true, API_KEY_ID, ORGANIZATION_ID,
+                        new ValidServiceDetails(SERVICE_ID, "Authentication", null, basePath, targetPath)));
+        return exchange;
+    }
+
     private static NexusConfig routeConfig() {
         NexusConfig config = new NexusConfig();
+        BusinessRouteConfig businessRoute = new BusinessRouteConfig();
+        businessRoute.setEnabled(true);
+        businessRoute.setPath("/**");
+        businessRoute.setOrder(100);
+        config.setBusinessRoute(businessRoute);
         SecurityConfig security = new SecurityConfig();
         security.setEnabled(true);
         JwtConfig jwtConfig = new JwtConfig();
@@ -340,7 +516,8 @@ class NexusGatewayApplicationTests {
         private String validResult() {
             return """
                     {"valid":true,"apiKeyId":"%s","organizationId":"%s",
-                     "service":{"serviceId":"%s","serviceName":"Orders"}}
+                     "service":{"serviceId":"%s","serviceName":"Orders",
+                     "serviceBasePath":"/orders","serviceTargetPath":"/auth/api/v1"}}
                     """.formatted(API_KEY_ID, ORGANIZATION_ID, SERVICE_ID);
         }
 

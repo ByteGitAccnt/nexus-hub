@@ -13,6 +13,7 @@ import java.util.Map;
 @Data
 public class NexusConfig {
 
+    private BusinessRouteConfig businessRoute;
     private ManagementConfig management;
     private Map<String, ServiceConfig> services;
     private SecurityConfig security;

@@ -8,24 +8,26 @@ import com.nexusgate.nexus_gateway.Config.RateLimit.RateLimitResult;
 import com.nexusgate.nexus_gateway.Config.RateLimit.RedisTokenBucket;
 import com.nexusgate.nexus_gateway.Dto.ValidationResult;
 import io.micrometer.core.instrument.MeterRegistry;
-import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.OrderedGatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
+import org.springframework.cloud.gateway.route.Route;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-@Slf4j
 @Component
 @ConditionalOnProperty(name = "rateLimit.enabled", havingValue = "true")
 public class InnerRateLimitGatewayFilterFactory extends AbstractGatewayFilterFactory<Object> {
+
+    private static final String BUSINESS_ENTRY_ROUTE_ID = "business-entry";
 
     private final RateLimitKeyGenerator keyGenerator;
     private final RedisTokenBucket tokenBucket;
@@ -44,7 +46,9 @@ public class InnerRateLimitGatewayFilterFactory extends AbstractGatewayFilterFac
     @Override
     public GatewayFilter apply(Object config) {
         GatewayFilter filter = (exchange, chain) -> {
-            log.atInfo().log("rate limitng the request {}", exchange.getRequest().getPath());
+            if (isBusinessEntryRoute(exchange) && !hasValidApiKeyMetadata(exchange)) {
+                return rejectUnauthenticated(exchange);
+            }
             if (!nexusConfig.getRateLimit().isEnabled()) {
                 return chain.filter(exchange);
             }
@@ -95,15 +99,11 @@ public class InnerRateLimitGatewayFilterFactory extends AbstractGatewayFilterFac
 
     private Mono<Void> handleApiKeyRequest(ServerWebExchange exchange, GatewayFilterChain chain,
             RateLimitPolicy policy) {
+        if (!hasValidApiKeyMetadata(exchange)) {
+            return rejectUnauthenticated(exchange);
+        }
         ValidationResult validationResult = exchange.getAttribute(
                 GatewayExchangeAttributes.API_KEY_VALIDATION_RESULT);
-        if (validationResult == null || !validationResult.valid()
-                || validationResult.organizationId() == null
-                || validationResult.service() == null
-                || validationResult.service().serviceId() == null) {
-            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
-            return exchange.getResponse().setComplete();
-        }
 
         String organizationId = validationResult.organizationId().toString();
         String serviceId = validationResult.service().serviceId().toString();
@@ -113,6 +113,34 @@ public class InnerRateLimitGatewayFilterFactory extends AbstractGatewayFilterFac
                 .onErrorResume(error -> handleRedisFailure(
                         exchange,
                         chain));
+    }
+
+    private static boolean isBusinessEntryRoute(ServerWebExchange exchange) {
+        Route route = exchange.getAttribute(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR);
+        return route != null && BUSINESS_ENTRY_ROUTE_ID.equals(route.getId());
+    }
+
+    private static boolean hasValidApiKeyMetadata(ServerWebExchange exchange) {
+        ValidationResult validationResult = exchange.getAttribute(
+                GatewayExchangeAttributes.API_KEY_VALIDATION_RESULT);
+        if (!"API_KEY".equals(exchange.getAttribute(GatewayExchangeAttributes.AUTH_MODE))
+                || validationResult == null
+                || !validationResult.valid()
+                || validationResult.organizationId() == null
+                || validationResult.service() == null
+                || validationResult.service().serviceId() == null) {
+            return false;
+        }
+
+        String organizationId = exchange.getAttribute(GatewayExchangeAttributes.ORGANIZATION_ID);
+        String serviceId = exchange.getAttribute(GatewayExchangeAttributes.SERVICE_ID);
+        return validationResult.organizationId().toString().equals(organizationId)
+                && validationResult.service().serviceId().toString().equals(serviceId);
+    }
+
+    private static Mono<Void> rejectUnauthenticated(ServerWebExchange exchange) {
+        exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+        return exchange.getResponse().setComplete();
     }
 
     private Mono<Void> handleResult(ServerWebExchange exchange, GatewayFilterChain chain, RateLimitPolicy policy,

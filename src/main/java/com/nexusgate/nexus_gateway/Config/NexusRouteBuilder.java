@@ -17,6 +17,10 @@ import java.util.Map;
 @Component
 public class NexusRouteBuilder implements RouteDefinitionLocator {
 
+    private static final String BUSINESS_ROUTE_ID = "business-entry";
+    private static final int MANAGEMENT_ROUTE_ORDER = 0;
+    private static final URI NO_FORWARDING_URI = URI.create("no://op");
+
     private final NexusConfig config;
 
     public NexusRouteBuilder(NexusConfig config) {
@@ -77,6 +81,7 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
             apiRoute.setId(serviceName);
             apiRoute.setUri(URI.create(service.getUrl()));
+            apiRoute.setOrder(MANAGEMENT_ROUTE_ORDER);
 
             PredicateDefinition apiPredicate = new PredicateDefinition();
             apiPredicate.setName("Path");
@@ -117,6 +122,39 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
                     routes.add(managementRoute);
                 }
             }
+        }
+
+        BusinessRouteConfig businessRouteConfig = config.getBusinessRoute();
+        if (businessRouteConfig != null && businessRouteConfig.isEnabled()) {
+            if (!"/**".equals(businessRouteConfig.getPath())) {
+                throw new IllegalStateException("The business entry route path must be /**");
+            }
+            if (businessRouteConfig.getOrder() <= MANAGEMENT_ROUTE_ORDER) {
+                throw new IllegalStateException(
+                        "The business entry route order must be lower priority than management routes");
+            }
+
+            RouteDefinition businessRoute = new RouteDefinition();
+            businessRoute.setId(BUSINESS_ROUTE_ID);
+            businessRoute.setUri(NO_FORWARDING_URI);
+            businessRoute.setOrder(businessRouteConfig.getOrder());
+
+            PredicateDefinition businessPredicate = new PredicateDefinition();
+            businessPredicate.setName("Path");
+            businessPredicate.addArg("pattern", businessRouteConfig.getPath());
+            businessRoute.setPredicates(List.of(businessPredicate));
+
+            List<FilterDefinition> businessFilters = new ArrayList<>();
+            if (config.getRateLimit().isEnabled()) {
+                FilterDefinition innerLimiter = new FilterDefinition();
+                innerLimiter.setName("InnerRateLimit");
+                businessFilters.add(innerLimiter);
+            }
+            FilterDefinition pathRewrite = new FilterDefinition();
+            pathRewrite.setName("ValidatedPathRewrite");
+            businessFilters.add(pathRewrite);
+            businessRoute.setFilters(businessFilters);
+            routes.add(businessRoute);
         }
 
         return Flux.fromIterable(routes);

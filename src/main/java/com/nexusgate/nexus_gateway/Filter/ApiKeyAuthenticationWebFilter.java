@@ -6,8 +6,6 @@ import com.nexusgate.nexus_gateway.Config.NexusConfig;
 import com.nexusgate.nexus_gateway.Dto.ValidationRequest;
 import com.nexusgate.nexus_gateway.Dto.ValidationResult;
 
-import lombok.extern.slf4j.Slf4j;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
@@ -28,7 +26,6 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 
-@Slf4j
 @Component
 @ConditionalOnProperty(name = "security.enabled", havingValue = "true")
 public class ApiKeyAuthenticationWebFilter implements WebFilter, Ordered {
@@ -138,7 +135,6 @@ public class ApiKeyAuthenticationWebFilter implements WebFilter, Ordered {
                 "apikey:" + apiKeyId,
                 null,
                 List.of(new SimpleGrantedAuthority("ROLE_API_KEY")));
-        log.atInfo().log("Api key autherized {} {} {}", apiKeyId, serviceId, organizationId);
         return chain.filter(authenticatedExchange)
                 .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
     }
