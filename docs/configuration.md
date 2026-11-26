@@ -194,7 +194,9 @@ security:
   enabled: true
 ```
 
-`security.enabled` acts as the master toggle for Gateway authentication. When it is `false`, neither the JWT nor API-key authentication filter is attached to configured routes. This is the top-level control for turning the security layer on or off.
+`security.enabled` acts as the master toggle for Gateway authentication. When it is `true`, API-key authentication runs as a WebFlux WebFilter before route lookup, while JWT authentication remains attached to the static `/nexushub/**` route. When it is `false`, the API-key WebFilter and route-level JWT authentication are disabled.
+
+Request logging and the outer IP-based rate limiter also run as WebFlux WebFilters before route lookup. Therefore unmatched requests are logged and IP-limited; non-management requests with an API key are validated before route resolution. A valid key does not create a route: if no static route matches, Gateway returns 404 after authentication. Dynamic route loading, business target selection, and target-path rewriting are deferred.
 
 ### JWT verification toggle
 
@@ -208,7 +210,7 @@ security:
 
 ### Internal API-key validation
 
-The Gateway calls the Management App's internal API-key validation endpoint reactively. Both processes must receive the same `NEXUSHUB_INTERNAL_SHARED_SECRET`; provide it through their environments, not in `nexus.yml` or source control. The Gateway's validation timeout defaults to two seconds and validation errors fail closed (`503`); invalid credentials return `401`, and a valid key without permission for the matched service returns `403`.
+The pre-routing API-key WebFilter calls the Management App's internal API-key validation endpoint reactively. Both processes must receive the same `NEXUSHUB_INTERNAL_SHARED_SECRET`; provide it through their environments, not in `nexus.yml` or source control. The Gateway's validation timeout defaults to two seconds and validation errors fail closed (`503`); invalid credentials return `401`, and a valid key without permission for a registered service matching the requested path returns `403`. On success, the validated result is stored on the exchange for downstream Gateway filters; the key is not validated again by route filters.
 
 ### Responsibility boundary
 
@@ -462,12 +464,18 @@ inner:
 
 The inner limiter is an authenticated-user rate limiter.
 
-It uses the authenticated identity established by the JWT gateway filter.
+For JWT-authenticated management routes, it uses the identity established by the JWT Gateway filter. For API-key-authenticated requests, it reads the validated organization and service from the exchange attribute set by the pre-routing API-key WebFilter; it does not call Management again.
 
 The bucket key follows:
 
 ```text
 nexusgate:ratelimit:user:<userid>
+```
+
+API-key requests use the organization/service-scoped bucket:
+
+```text
+nexusgate:ratelimit:org:<organization-id>:service:<service-id>
 ```
 
 This means different authenticated users receive independent rate-limit buckets.
@@ -480,6 +488,8 @@ User B → nexusgate:ratelimit:user:73
 ```
 
 A request from User A consuming all of User A's tokens does not consume User B's tokens.
+
+The request logging WebFilter runs first (`-200`), followed by the outer IP limiter (`-150`), Spring Security (`-100`), and the API-key WebFilter (`-90`). Route-level JWT authentication and the inner rate limiter run only after a route matches.
 
 ## 10. Token bucket parameters
 

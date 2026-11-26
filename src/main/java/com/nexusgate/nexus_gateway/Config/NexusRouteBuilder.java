@@ -65,14 +65,6 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
                 jwtFilter.setArgs(args);
             }
-            FilterDefinition apiKeyFilter = null;
-            if (config.getSecurity().isEnabled()) {
-                apiKeyFilter = new FilterDefinition();
-                apiKeyFilter.setName("ApiKeyAuthentication");
-                Map<String, String> args = new HashMap<>();
-                args.put("nexusHubPath", nexusHubPath);
-                apiKeyFilter.setArgs(args);
-            }
             // inner rate limiter filter
             FilterDefinition innerLimiter = null;
             if (config.getRateLimit().isEnabled()) {
@@ -96,10 +88,6 @@ public class NexusRouteBuilder implements RouteDefinitionLocator {
 
             if (jwtFilter != null) {
                 filters.add(jwtFilter);
-            }
-
-            if (apiKeyFilter != null) {
-                filters.add(apiKeyFilter);
             }
 
             if (innerLimiter != null) {

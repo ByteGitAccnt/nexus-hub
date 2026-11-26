@@ -5,13 +5,13 @@ import com.nexusgate.nexus_gateway.Config.NexusConfig;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cloud.gateway.filter.GatewayFilterChain;
-import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.route.Route;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.server.WebFilterChain;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -24,24 +24,21 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
-public class LoggingGatewayFilter implements GlobalFilter, Ordered {
+public class RequestLoggingWebFilter implements WebFilter, Ordered {
     private final NexusConfig nexusConfig;
     private final MeterRegistry metricRegistry;
 
-    public LoggingGatewayFilter(NexusConfig nexusConfig, MeterRegistry metricRegistry) {
+    public RequestLoggingWebFilter(NexusConfig nexusConfig, MeterRegistry metricRegistry) {
         this.nexusConfig = nexusConfig;
         this.metricRegistry = metricRegistry;
     }
 
     @Override
-    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+    public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         if (!nexusConfig.getLogging().isEnabled()) {
             return chain.filter(exchange);
         }
         LoggingFields fields = nexusConfig.getLogging().getFields();
-        Route route = exchange.getAttribute(
-                ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR);
-        String serviceName = route != null ? route.getId() : "unknown";
         // for duration calculation
         long startTime = fields.isDuration() ? System.currentTimeMillis() : 0;
         long metricStartTime = System.nanoTime();
@@ -69,6 +66,8 @@ public class LoggingGatewayFilter implements GlobalFilter, Ordered {
         // and CANCEL
         return chain.filter(mutatedExchange)
                 .doFinally(signal -> {
+                    Route route = exchange.getAttribute(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR);
+                    String serviceName = route != null ? route.getId() : "unknown";
                     // after
                     Instant timestamp = null;
                     if (fields.isTimestamp()) {
